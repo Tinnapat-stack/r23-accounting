@@ -666,6 +666,40 @@ async function renderChargeDetail(id) {
     try { must(await sb.from('charges').update({ status: next }).eq('id', id)); route(); } catch (err) { toast(thai(err)); }
   } }, c.status === 'open' ? 'ปิดรับชำระ' : 'เปิดรับชำระอีกครั้ง') : null;
   const owed = rows.reduce((s, r) => s + Number(r.outstanding_satang), 0);
+
+  // ยอดต่อคนแก้ไม่ได้ (ยอดของแต่ละคนสร้างไปแล้ว) แก้ได้แค่ชื่อ รายละเอียด วันครบกำหนด
+  const editCharge = async () => {
+    const v = await dialogForm('แก้ไขรายการเรียกเก็บ', [
+      { name: 'title', label: 'ชื่อรายการ', value: c.title },
+      { name: 'description', label: 'รายละเอียด (ไม่บังคับ)', value: c.description ?? '', required: false },
+      { name: 'due', label: 'ครบกำหนด (เลื่อนวันแล้วระบบเตือนใหม่ตามวันใหม่)', value: c.due_date ?? '', type: 'date', required: false },
+    ], 'บันทึก');
+    if (!v) return;
+    try {
+      must(await sb.from('charges').update({ title: v.title.trim(), description: v.description.trim() || null, due_date: v.due || null }).eq('id', id));
+      toast('บันทึกแล้ว'); route();
+    } catch (err) { toast(thai(err)); }
+  };
+  const addPeople = async () => {
+    const v = await dialogForm('เพิ่มคนเข้ารายการนี้', [
+      { name: 'who', label: 'รหัสนิสิต คั่นด้วยเว้นวรรคหรือจุลภาค (เว้นว่าง = สมาชิกทุกคนที่ยังไม่อยู่ในรายการ)', required: false },
+      { name: 'amount', label: `ยอดต่อคน (บาท) เว้นว่าง = ${baht(c.amount_satang)} บาทเท่ารายการ`, required: false },
+    ], 'เพิ่มคน');
+    if (!v) return;
+    try {
+      const ids = v.who.split(/[\s,]+/).filter(Boolean);
+      const amount = v.amount.trim() ? toSatang(v.amount) : null;
+      if (v.amount.trim() && !amount) throw new Error('กรอกยอดเป็นตัวเลข');
+      const n = must(await sb.rpc('add_to_charge', { p_charge_id: id, p_student_ids: ids.length ? ids : null, p_amount_satang: amount }));
+      toast(n ? `เพิ่มแล้ว ${n} คน และแจ้งเตือนแล้ว` : 'ไม่มีคนที่ต้องเพิ่ม (อยู่ในรายการครบแล้ว)');
+      route();
+    } catch (err) { toast(thai(err)); }
+  };
+  const manage = can('president', 'admin') ? [
+    h('button', { className: 'ghost', onclick: editCharge }, 'แก้ไขรายการ'),
+    c.status === 'open' ? h('button', { className: 'ghost', onclick: addPeople }, 'เพิ่มคน') : null,
+  ] : null;
+
   const remind = can('treasurer', 'president') && c.status === 'open' && owed > 0 ? h('button', { className: 'ghost', onclick: async e => {
     if (!confirm('ส่งแจ้งเตือนในเว็บถึงทุกคนที่ยังค้างรายการนี้? (ส่งถึงคนเดิมได้วันละครั้ง)')) return;
     e.target.disabled = true;
@@ -679,7 +713,7 @@ async function renderChargeDetail(id) {
   return h('div', {},
     h('p', {}, h('a', { href: '#charges' }, '← กลับไปรายการ')),
     h('div', { className: 'card' },
-      h('div', { className: 'row' }, h('h1', {}, c.title), h('div', { className: 'row', style: 'margin-left:auto' }, remind, toggle)),
+      h('div', { className: 'row' }, h('h1', {}, c.title), h('div', { className: 'row', style: 'margin-left:auto' }, remind, manage, toggle)),
       h('p', { className: 'muted' }, `${baht(c.amount_satang)} บาท/คน · ครบกำหนด ${day(c.due_date)}`, c.description ? ' · ' + c.description : ''),
       h('p', {}, `ชำระครบ ${rows.filter(r => Number(r.outstanding_satang) === 0).length}/${rows.length} คน · ยอดค้างรวม `, money(owed)),
       h('div', { className: 'grid', style: 'margin-bottom:8px' }, search, filter),
@@ -688,10 +722,11 @@ async function renderChargeDetail(id) {
 
 // สมาชิก สิทธิ์ และบัญชีรับเงิน (แอดมิน)
 async function renderMembers() {
-  const [members, roleRows, accounts] = await Promise.all([
+  const [members, roleRows, accounts, categories] = await Promise.all([
     sb.from('members').select('*').order('student_id').then(must),
     sb.from('user_roles').select('user_id, role').then(must),
     sb.from('bank_accounts').select('*').order('created_at').then(must),
+    sb.from('expense_categories').select('*').order('sort').order('name').then(must),
   ]);
   const byUser = new Map();
   for (const r of roleRows) byUser.set(r.user_id, (byUser.get(r.user_id) ?? new Set()).add(r.role));
@@ -826,7 +861,23 @@ async function renderMembers() {
         ['ธนาคาร', a => a.bank_name], ['ชื่อบัญชี', a => a.account_name], ['เลขบัญชี', a => a.account_no],
         ['พร้อมเพย์', a => a.promptpay ?? '-'],
         ['', a => h('button', { className: 'link', onclick: () => toggleAccount(a) }, a.active ? 'ใช้งานอยู่ · ปิด' : 'ปิดอยู่ · เปิด')],
-      ], accounts) : h('p', { className: 'muted' }, 'ยังไม่มีบัญชีรับเงิน')));
+      ], accounts) : h('p', { className: 'muted' }, 'ยังไม่มีบัญชีรับเงิน')),
+    h('div', { className: 'card' }, h('h2', {}, 'หมวดค่าใช้จ่าย'),
+      onSubmit(h('form', { className: 'grid' },
+        h('div', {}, h('label', { htmlFor: 'cat-name' }, 'ชื่อหมวดใหม่'), h('input', { id: 'cat-name', name: 'name', required: true, placeholder: 'เช่น ค่าเช่าชุด' })),
+        h('button', { type: 'submit' }, 'เพิ่มหมวด'), msgBox()), async f => {
+          must(await sb.from('expense_categories').insert({ name: f.name.trim(), sort: 50 }));
+          toast('เพิ่มหมวดแล้ว'); route();
+        }),
+      h('p', { className: 'muted' }, 'เปลี่ยนชื่อหรือลบหมวดไม่ได้ เพราะคำขอเบิกเดิมอ้างถึงชื่อนี้ ถ้าไม่ใช้แล้วให้ซ่อน'),
+      table([
+        ['หมวด', x => x.name],
+        ['สถานะ', x => h('span', { className: 'chip ' + (x.active ? 'ok' : 'muted') }, x.active ? 'ใช้งานอยู่' : 'ซ่อนอยู่')],
+        ['', x => h('button', { className: 'link', onclick: async () => {
+          try { must(await sb.from('expense_categories').update({ active: !x.active }).eq('name', x.name)); route(); }
+          catch (err) { toast(thai(err)); }
+        } }, x.active ? 'ซ่อน' : 'ใช้งานอีกครั้ง')],
+      ], categories)));
 }
 
 // ─── ระยะ 4: สรุปการเงิน เบิกจ่าย งบประมาณ รายงาน ประวัติการกระทำ ─────────
