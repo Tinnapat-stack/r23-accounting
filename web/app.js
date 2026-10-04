@@ -224,7 +224,6 @@ const ICONS = {
   users: svg('<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M16 4a4 4 0 0 1 0 8M22 21c0-3-2-5-5-6"/>'),
 };
 
-const MANUALS = 'https://github.com/Tinnapat-stack/r23-accounting/blob/main/docs';
 const active = () => !!member?.active;
 const PAGES = {
   home: { group: 'เมนูหลัก', icon: 'home', label: 'หน้าหลัก', allowed: () => true, render: renderHome },
@@ -239,6 +238,8 @@ const PAGES = {
   reports: { group: 'การเงิน', icon: 'report', label: 'รายงาน', allowed: active, render: renderReports },
   members: { group: 'ระบบ', icon: 'users', label: 'สมาชิกและตั้งค่า', allowed: () => can('admin'), render: renderMembers },
   audit: { group: 'ระบบ', icon: 'history', label: 'ประวัติการกระทำ', allowed: () => can('auditor', 'admin'), render: renderAudit },
+  'manual-member': { group: 'ช่วยเหลือ', icon: 'help', label: 'คู่มือสมาชิก', allowed: () => true, render: () => renderManual('member') },
+  'manual-staff': { group: 'ช่วยเหลือ', icon: 'help', label: 'คู่มือผู้ดูแล', allowed: () => can('treasurer', 'president', 'auditor', 'admin'), render: () => renderManual('staff') },
 };
 
 // เมนูด้านซ้าย จัดกลุ่มตาม group และแสดงเฉพาะหน้าที่บทบาทนี้เข้าได้
@@ -256,12 +257,7 @@ async function renderNav() {
       h('span', { className: 'ico', innerHTML: ICONS[p.icon] }), p.label,
       badge[key] ? h('span', { className: 'count' }, badge[key]) : null));
   }
-  // คู่มืออยู่ใน repo (GitHub แสดงไฟล์ Markdown ให้อ่านได้)
-  const manual = (file, label) => h('a', { href: `${MANUALS}/${file}.md`, target: '_blank', rel: 'noopener' },
-    h('span', { className: 'ico', innerHTML: ICONS.help }), label);
-  items.push(h('div', { className: 'group' }, 'ช่วยเหลือ'), manual('คู่มือสมาชิก', 'คู่มือสมาชิก'),
-    can('treasurer', 'president', 'auditor', 'admin') ? manual('คู่มือผู้ดูแล', 'คู่มือผู้ดูแล') : null);
-  $('#nav').replaceChildren(...items.filter(Boolean));
+  $('#nav').replaceChildren(...items);
 }
 
 // ปุ่ม ☰: จอกว้างซ่อน/แสดงเมนู (จำไว้) จอแคบเปิดลิ้นชัก
@@ -1306,6 +1302,27 @@ async function renderRefunds() {
         ['เหตุผล', r => r.reason],
         ['สลิป', r => h('button', { className: 'link', onclick: () => openSlip(r.slip_path) }, 'เปิดดู')],
       ], history) : h('p', { className: 'muted' }, 'ยังไม่มีการคืนเงิน')));
+}
+
+// ─── คู่มือ ──────────────────────────────────────────────────────
+
+// คู่มือเขียนเป็น Markdown ใน web/manuals/ แปลงเป็นหน้าเว็บด้วย marked (โหลดเฉพาะตอนเปิดคู่มือ)
+// เนื้อหามาจากไฟล์ใน repo ของเราเอง ไม่ใช่ข้อมูลที่ผู้ใช้กรอก
+async function renderManual(name) {
+  const [{ marked }, text] = await Promise.all([
+    import('https://cdn.jsdelivr.net/npm/marked@15/+esm'),
+    fetch(`./manuals/${name}.md`, { cache: 'no-cache' }).then(r => { if (!r.ok) throw new Error('ไม่พบไฟล์คู่มือ'); return r.text(); }),
+  ]);
+  const body = h('div', { className: 'card manual', innerHTML: marked.parse(text) });
+  // ลิงก์ระหว่างคู่มือ (member.md / staff.md) → หน้าในเว็บ, ลิงก์ภายนอกเปิดแท็บใหม่
+  for (const a of body.querySelectorAll('a[href]')) {
+    const m = /^(member|staff)\.md$/.exec(a.getAttribute('href'));
+    if (m) a.href = '#manual-' + m[1];
+    else if (/^https?:/.test(a.getAttribute('href'))) { a.target = '_blank'; a.rel = 'noopener'; }
+  }
+  // ตารางกว้างเลื่อนแนวนอนได้บนมือถือ
+  for (const t of body.querySelectorAll('table')) t.replaceWith(h('div', { className: 'table-wrap' }, t.cloneNode(true)));
+  return body;
 }
 
 // ─── กระดิ่งแจ้งเตือน ─────────────────────────────────────────────
