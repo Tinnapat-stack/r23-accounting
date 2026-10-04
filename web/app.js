@@ -110,7 +110,7 @@ function dialogForm(title, fields, okLabel, danger = false) {
       fields.map(f => [
         h('label', { htmlFor: 'd-' + f.name }, f.label),
         h('input', { id: 'd-' + f.name, name: f.name, type: f.type ?? 'text', accept: f.accept,
-                     value: f.type === 'file' ? null : (f.value ?? ''), required: f.required !== false }),
+                     value: f.type === 'file' ? null : (f.value ?? ''), required: f.required !== false, readOnly: f.readOnly }),
       ]),
       h('div', { className: 'row', style: 'margin-top:16px; justify-content:flex-end' },
         h('button', { type: 'button', className: 'ghost', onclick: () => done(null) }, 'ยกเลิก'),
@@ -763,11 +763,14 @@ async function renderMembers() {
     const v = await dialogForm('แก้ไขข้อมูลสมาชิก', [
       { name: 'student_id', label: 'รหัสนิสิต', value: m.student_id },
       { name: 'full_name', label: 'ชื่อ-นามสกุล', value: m.full_name },
-      { name: 'email', label: m.user_id ? 'อีเมล (สมัครแล้ว แก้ตรงนี้ไม่เปลี่ยนอีเมลที่ใช้ล็อกอิน)' : 'อีเมล (ต้องตรงกับที่จะใช้สมัคร)', value: m.email, type: 'email' },
+      // สมัครแล้ว: อีเมลล็อกอินอยู่ในระบบล็อกอินของ Supabase แก้ตรงนี้แล้วจะไม่ตรงกัน จึงล็อกไว้
+      { name: 'email', label: m.user_id ? 'อีเมล (สมัครแล้ว เปลี่ยนไม่ได้ เพราะเป็นอีเมลที่ใช้ล็อกอิน)' : 'อีเมล (ต้องตรงกับที่จะใช้สมัคร)',
+        value: m.email, type: 'email', readOnly: !!m.user_id },
     ], 'บันทึก');
     if (!v) return;
     try {
-      must(await sb.from('members').update({ student_id: v.student_id.trim(), full_name: v.full_name.trim(), email: v.email.trim().toLowerCase() }).eq('id', m.id));
+      must(await sb.from('members').update({ student_id: v.student_id.trim(), full_name: v.full_name.trim(),
+        ...(m.user_id ? {} : { email: v.email.trim().toLowerCase() }) }).eq('id', m.id));
       toast('บันทึกแล้ว'); route();
     } catch (err) { toast(thai(err)); }
   };
