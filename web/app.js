@@ -129,19 +129,39 @@ function parseMemberRows(text) {
     .map(([student_id = '', full_name = '', email = '']) => ({ student_id, full_name, email }));
 }
 
-// ไฟล์ตัวอย่างมีแค่หัวตาราง (ไม่มีแถวตัวอย่าง กันลืมลบแล้วนำเข้าคนปลอม)
-// ﻿ ทำให้ Excel อ่านภาษาไทยในไฟล์ CSV ถูก
-function downloadTemplate() {
-  const blob = new Blob(['﻿รหัสนิสิต,ชื่อ-นามสกุล,อีเมล\r\n'], { type: 'text/csv;charset=utf-8' });
-  const a = h('a', { href: URL.createObjectURL(blob), download: 'รายชื่อสมาชิก-ตัวอย่าง.csv' });
+// ดาวน์โหลดตารางเป็น CSV ที่ Excel เปิดภาษาไทยได้ (BOM นำหน้า)
+// ช่องที่ขึ้นต้นด้วย = + @ หรือ - (ที่ไม่ใช่ตัวเลขติดลบ) ใส่ ' นำหน้า กัน Excel ตีความเป็นสูตร
+function downloadCsv(filename, rows) {
+  const cell = v => {
+    let t = String(v ?? '');
+    if (/^[=+@\t\r]/.test(t) || /^-(?!\d)/.test(t)) t = "'" + t;
+    return '"' + t.replace(/"/g, '""') + '"';
+  };
+  const text = '﻿' + rows.map(r => r.map(cell).join(',')).join('\r\n') + '\r\n';
+  const a = h('a', { href: URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' })), download: filename });
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
-async function openSlip(path) {
-  const { data, error } = await sb.storage.from('slips').createSignedUrl(path, 600);
+// ไฟล์ตัวอย่างมีแค่หัวตาราง (ไม่มีแถวตัวอย่าง กันลืมลบแล้วนำเข้าคนปลอม)
+const downloadTemplate = () => downloadCsv('รายชื่อสมาชิก-ตัวอย่าง.csv', [['รหัสนิสิต', 'ชื่อ-นามสกุล', 'อีเมล']]);
+
+async function openFile(bucket, path) {
+  const { data, error } = await sb.storage.from(bucket).createSignedUrl(path, 600);
   if (error) return toast(thai(error));
   open(data.signedUrl, '_blank', 'noopener');
+}
+const openSlip = path => openFile('slips', path);
+const fileLink = (path, label) => path ? h('button', { className: 'link', onclick: () => openFile('evidence', path) }, label) : '-';
+
+// ใบเสนอราคา/ใบเสร็จ: รูปหรือ PDF ไม่เกิน 10 MB เก็บในโฟลเดอร์ของผู้อัปโหลด
+const EVIDENCE_TYPES = { ...SLIP_TYPES, 'application/pdf': 'pdf' };
+async function uploadEvidence(file) {
+  if (!EVIDENCE_TYPES[file.type]) throw new Error('ไฟล์หลักฐานต้องเป็นรูป JPG, PNG, WEBP หรือ PDF');
+  if (file.size > 10 * 1024 * 1024) throw new Error('ไฟล์หลักฐานใหญ่เกิน 10 MB');
+  const path = `${me.id}/${crypto.randomUUID()}.${EVIDENCE_TYPES[file.type]}`;
+  must(await sb.storage.from('evidence').upload(path, file, { contentType: file.type }));
+  return path;
 }
 
 // ─── สถานะผู้ใช้ ─────────────────────────────────────────────────
@@ -169,6 +189,11 @@ async function pendingCount() {
   return count ?? 0;
 }
 
+async function expenseCount(status) {
+  const { count } = await sb.from('expense_requests').select('id', { count: 'exact', head: true }).eq('status', status);
+  return count ?? 0;
+}
+
 // ─── หน้าต่าง ๆ ─────────────────────────────────────────────────
 
 // ไอคอนเส้น (SVG คงที่ ไม่มีข้อมูลผู้ใช้ปน)
@@ -179,22 +204,35 @@ const ICONS = {
   receipt: svg('<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/>'),
   check: svg('<path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>'),
   list: svg('<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>'),
+  chart: svg('<path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 6-6"/>'),
+  money: svg('<path d="M12 2v20M17 6H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>'),
+  budget: svg('<path d="M21 12a9 9 0 1 1-9-9v9z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/>'),
+  report: svg('<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>'),
+  history: svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
   users: svg('<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M16 4a4 4 0 0 1 0 8M22 21c0-3-2-5-5-6"/>'),
 };
 
+const active = () => !!member?.active;
 const PAGES = {
   home: { group: 'เมนูหลัก', icon: 'home', label: 'หน้าหลัก', allowed: () => true, render: renderHome },
-  pay: { group: 'เมนูหลัก', icon: 'pay', label: 'แจ้งชำระ', allowed: () => !!member?.active, render: renderPay },
-  'my-payments': { group: 'เมนูหลัก', icon: 'receipt', label: 'การชำระของฉัน', allowed: () => !!member?.active, render: renderMyPayments },
+  summary: { group: 'เมนูหลัก', icon: 'chart', label: 'สรุปการเงิน', allowed: active, render: renderSummary },
+  pay: { group: 'เมนูหลัก', icon: 'pay', label: 'แจ้งชำระ', allowed: active, render: renderPay },
+  'my-payments': { group: 'เมนูหลัก', icon: 'receipt', label: 'การชำระของฉัน', allowed: active, render: renderMyPayments },
+  expenses: { group: 'เมนูหลัก', icon: 'money', label: 'เบิกจ่าย', allowed: active, render: renderExpenses },
   review: { group: 'การเงิน', icon: 'check', label: 'ตรวจสลิป', allowed: () => can('treasurer'), render: renderReview },
   charges: { group: 'การเงิน', icon: 'list', label: 'รายการเรียกเก็บ', allowed: () => can('treasurer', 'president', 'auditor', 'admin'), render: renderCharges },
+  budget: { group: 'การเงิน', icon: 'budget', label: 'งบประมาณ', allowed: active, render: renderBudget },
+  reports: { group: 'การเงิน', icon: 'report', label: 'รายงาน', allowed: active, render: renderReports },
   members: { group: 'ระบบ', icon: 'users', label: 'สมาชิกและตั้งค่า', allowed: () => can('admin'), render: renderMembers },
+  audit: { group: 'ระบบ', icon: 'history', label: 'ประวัติการกระทำ', allowed: () => can('auditor', 'admin'), render: renderAudit },
 };
 
 // เมนูด้านซ้าย จัดกลุ่มตาม group และแสดงเฉพาะหน้าที่บทบาทนี้เข้าได้
 async function renderNav() {
   const [current] = location.hash.slice(1).split('/');
-  const pending = can('treasurer') ? await pendingCount() : 0;
+  // ตัวเลขงานค้างของเหรัญญิก: สลิปรอตรวจ และคำขอเบิกรออนุมัติ
+  const [slips, expenses] = can('treasurer') ? await Promise.all([pendingCount(), expenseCount('pending')]) : [0, 0];
+  const badge = { review: slips, expenses };
   const items = [];
   let group;
   for (const [key, p] of Object.entries(PAGES)) {
@@ -202,7 +240,7 @@ async function renderNav() {
     if (p.group !== group) items.push(h('div', { className: 'group' }, group = p.group));
     items.push(h('a', { href: '#' + key, className: (current || 'home') === key ? 'on' : null },
       h('span', { className: 'ico', innerHTML: ICONS[p.icon] }), p.label,
-      key === 'review' && pending ? h('span', { className: 'count' }, pending) : null));
+      badge[key] ? h('span', { className: 'count' }, badge[key]) : null));
   }
   $('#nav').replaceChildren(...items);
 }
@@ -234,11 +272,14 @@ async function renderHome() {
     return h('div', {}, hello, empty('บัญชีนี้ถูกระงับหรือยังไม่ได้ผูกกับรายชื่อสมาชิก กรุณาติดต่อแอดมิน'));
   }
 
-  const [rows, credit, mine, toReview] = await Promise.all([
+  const [rows, credit, mine, toReview, [fund], toApprove, toPay] = await Promise.all([
     sb.from('charge_balances').select('*').eq('member_id', member.id).order('due_date', { nullsFirst: false }).then(must),
     sb.from('member_credit').select('credit_satang').eq('member_id', member.id).maybeSingle().then(must),
     sb.from('payment_submissions').select('id', { count: 'exact', head: true }).eq('member_id', member.id).eq('status', 'pending'),
     can('treasurer') ? pendingCount() : 0,
+    sb.rpc('fund_summary').then(must),
+    can('treasurer') ? expenseCount('pending') : 0,
+    can('treasurer') ? expenseCount('approved') : 0,
   ]);
   const owed = rows.reduce((s, r) => s + Number(r.outstanding_satang), 0);
   const creditLeft = Number(credit?.credit_satang ?? 0);
@@ -248,7 +289,11 @@ async function renderHome() {
       owed ? h('li', {}, 'ยอดค้างชำระรวม ', money(owed), ' ', h('a', { href: '#pay' }, 'แจ้งชำระ →')) : h('li', {}, 'ไม่มียอดค้างชำระ ✓'),
       mine.count ? h('li', {}, `สลิปของคุณรอตรวจสอบ ${mine.count} รายการ `, h('a', { href: '#my-payments' }, 'ดู →')) : null,
       toReview ? h('li', {}, `สลิปรอตรวจ ${toReview} รายการ `, h('a', { href: '#review' }, 'ตรวจสลิป →')) : null,
-      creditLeft ? h('li', {}, 'เครดิตจากการจ่ายเกินคงเหลือ ', money(creditLeft)) : null));
+      creditLeft ? h('li', {}, 'เครดิตจากการจ่ายเกินคงเหลือ ', money(creditLeft)) : null,
+      toApprove ? h('li', {}, `คำขอเบิกรออนุมัติ ${toApprove} รายการ `, h('a', { href: '#expenses' }, 'ดู →')) : null,
+      toPay ? h('li', {}, `อนุมัติแล้วรอจ่าย ${toPay} รายการ `, h('a', { href: '#expenses' }, 'ดู →')) : null),
+    h('p', { className: 'muted', style: 'margin-bottom:0' }, 'เงินกองกลางของรุ่นคงเหลือ ', money(fund.balance_satang), ' ',
+      h('a', { href: '#summary' }, 'ดูสรุปการเงิน →')));
 
   const useCredit = async r => {
     if (!confirm(`ใช้เครดิตตัดยอด "${r.title}"?`)) return;
@@ -737,6 +782,430 @@ async function renderMembers() {
       ], accounts) : h('p', { className: 'muted' }, 'ยังไม่มีบัญชีรับเงิน')));
 }
 
+// ─── ระยะ 4: สรุปการเงิน เบิกจ่าย งบประมาณ รายงาน ประวัติการกระทำ ─────────
+
+const EXP_STATUS = {
+  pending: ['รออนุมัติ', 'wait'], approved: ['อนุมัติแล้ว รอจ่าย', ''], paid: ['จ่ายแล้ว', 'ok'],
+  rejected: ['ไม่อนุมัติ', 'bad'], cancelled: ['ยกเลิกแล้ว', 'muted'],
+};
+const expChip = s => h('span', { className: 'chip ' + EXP_STATUS[s][1] }, EXP_STATUS[s][0]);
+const stat = (label, value, note) => h('div', { className: 'stat' }, h('span', {}, label), h('b', {}, value), note ? h('small', {}, note) : null);
+const monthTh = m => new Date(m + 'T00:00').toLocaleDateString('th-TH', { month: 'short', year: '2-digit' });
+const isoDay = d => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+
+// กราฟแท่งรายรับ (น้ำเงิน) เทียบรายจ่าย (ส้ม) รายเดือน แกนเดียว เริ่มที่ 0 ชี้ดูยอดได้ และมีตารางให้ดูแทนกราฟ
+function cashflowChart(rows) {
+  if (!rows.length) return h('p', { className: 'muted' }, 'ยังไม่มีรายรับหรือรายจ่าย');
+  rows = rows.slice(-12);
+  const max = Math.max(1, ...rows.flatMap(r => [Number(r.income_satang), Number(r.expense_satang)]));
+  const tip = h('div', { className: 'tip', hidden: true });
+  const chart = h('div', { className: 'chart' });
+  const bar = (v, cls, label) => {
+    const el = h('div', { className: 'bar ' + cls, tabIndex: 0, 'aria-label': label, style: `height:${(Number(v) / max) * 100}%` });
+    const showTip = () => {
+      const b = el.getBoundingClientRect(), c = chart.getBoundingClientRect();
+      tip.textContent = label; tip.hidden = false;
+      tip.style.left = `${b.left - c.left + b.width / 2}px`; tip.style.top = `${b.top - c.top}px`;
+    };
+    el.addEventListener('pointerenter', showTip); el.addEventListener('focus', showTip);
+    el.addEventListener('pointerleave', () => tip.hidden = true); el.addEventListener('blur', () => tip.hidden = true);
+    return el;
+  };
+  chart.append(
+    h('div', { className: 'legend' }, h('span', {}, h('i', { className: 'sw inc' }), 'รายรับ'), h('span', {}, h('i', { className: 'sw exp' }), 'รายจ่าย'),
+      h('span', { style: 'margin-left:auto' }, 'สูงสุด ', money(max))),
+    h('div', { className: 'plot' }, rows.map(r => h('div', { className: 'col' },
+      h('div', { className: 'bars' },
+        bar(r.income_satang, 'inc', `${monthTh(r.month)} รายรับ ${baht(r.income_satang)} บาท`),
+        bar(r.expense_satang, 'exp', `${monthTh(r.month)} รายจ่าย ${baht(r.expense_satang)} บาท`)),
+      h('span', { className: 'x' }, monthTh(r.month))))),
+    tip);
+  return h('div', {}, chart,
+    h('details', { className: 'help' }, h('summary', {}, 'ดูเป็นตาราง'),
+      table([['เดือน', r => monthTh(r.month)], ['รายรับ', r => money(r.income_satang)], ['รายจ่าย', r => money(r.expense_satang)]], rows)));
+}
+
+// แถบแนวนอนตามสัดส่วน (ใช้กับรายจ่ายตามหมวด)
+const hbars = (rows, total) => h('div', {}, rows.map(([label, v]) => h('div', { className: 'hrow' },
+  h('div', { className: 'row' }, h('span', {}, label), h('b', { style: 'margin-left:auto' }, money(v))),
+  h('div', { className: 'track' }, h('div', { className: 'fill', style: `width:${total ? (v / total) * 100 : 0}%` })))));
+
+// สรุปการเงิน: สมาชิกทุกคนเห็น (ตัวเลขรวม ไม่มีรายชื่อว่าใครจ่าย/ค้าง)
+async function renderSummary() {
+  const [[f], months, charges, paid] = await Promise.all([
+    sb.rpc('fund_summary').then(must),
+    sb.rpc('monthly_cashflow').then(must),
+    sb.rpc('charge_summary').then(must),
+    sb.from('expense_feed').select('id, title, category, activity_name, paid_satang, paid_at, receipt_path')
+      .eq('status', 'paid').order('paid_at', { ascending: false }).then(must),
+  ]);
+
+  const setOpening = async () => {
+    const v = await dialogForm('ตั้งยอดยกมา', [
+      { name: 'amount', label: 'เงินที่มีอยู่ก่อนเริ่มใช้ระบบ (บาท)', value: f.opening_satang ? baht(f.opening_satang).replace(/,/g, '') : '' },
+      { name: 'note', label: 'ที่มาของยอด เช่น ยอดในสมุดบัญชี ณ วันที่ ... รับรองโดย ...' },
+    ], 'บันทึกยอดยกมา');
+    if (!v) return;
+    try {
+      const amount = toSatang(v.amount);
+      if (amount == null) throw new Error('กรอกยอดเป็นตัวเลข เช่น 5000 หรือ 5000.50');
+      must(await sb.rpc('set_opening_balance', { p_amount_satang: amount, p_note: v.note }));
+      toast('บันทึกยอดยกมาแล้ว'); route();
+    } catch (err) { toast(thai(err)); }
+  };
+
+  const byCategory = new Map();
+  for (const e of paid) byCategory.set(e.category, (byCategory.get(e.category) ?? 0) + Number(e.paid_satang));
+  const catRows = [...byCategory].sort((a, b) => b[1] - a[1]);
+
+  return h('div', {},
+    h('div', { className: 'row', style: 'margin-bottom:16px' },
+      h('div', {}, h('h1', {}, 'สรุปการเงิน'), h('p', { className: 'muted', style: 'margin:0' }, 'เงินกองกลางของรุ่น สมาชิกทุกคนเห็นข้อมูลชุดเดียวกัน')),
+      can('treasurer') ? h('button', { className: 'ghost', style: 'margin-left:auto', onclick: setOpening },
+        f.opening_satang ? 'แก้ยอดยกมา' : 'ตั้งยอดยกมา') : null),
+    h('div', { className: 'stats' },
+      stat('เงินคงเหลือ', money(f.balance_satang),
+        f.approved_unpaid_satang > 0 ? ['อนุมัติแล้วรอจ่าย ', money(f.approved_unpaid_satang)] : (f.opening_satang ? ['รวมยอดยกมา ', money(f.opening_satang)] : 'ยังไม่ได้ตั้งยอดยกมา')),
+      stat('รายรับที่ยืนยันแล้ว', money(f.income_satang)),
+      stat('รายจ่ายที่จ่ายแล้ว', money(f.expense_satang)),
+      stat('รอดำเนินการ', `${f.pending_slips + f.pending_expenses} รายการ`,
+        `สลิปรอตรวจ ${f.pending_slips} · คำขอเบิกรออนุมัติ ${f.pending_expenses}`)),
+    h('div', { className: 'split' },
+      h('div', { className: 'card' }, h('h2', {}, 'รายรับ–รายจ่ายรายเดือน'), cashflowChart(months)),
+      h('div', { className: 'card' }, h('h2', {}, 'รายจ่ายตามหมวด'),
+        catRows.length ? hbars(catRows, f.expense_satang) : h('p', { className: 'muted' }, 'ยังไม่มีรายจ่าย'))),
+    h('div', { className: 'card' }, h('h2', {}, 'รายรับแยกตามรายการเรียกเก็บ'),
+      charges.length ? table([
+        ['รายการ', c => c.title],
+        ['ยอดต่อคน', c => money(c.amount_satang)],
+        ['ชำระครบ', c => `${c.paid_members}/${c.members} คน`],
+        ['เก็บได้', c => money(c.collected_satang)],
+        ['ยังค้าง', c => money(c.outstanding_satang)],
+      ], charges) : h('p', { className: 'muted' }, 'ยังไม่มีรายการเรียกเก็บ')),
+    h('div', { className: 'card' }, h('div', { className: 'row' }, h('h2', {}, 'รายจ่ายทั้งหมด'),
+        h('a', { href: '#expenses', style: 'margin-left:auto' }, 'ดูคำขอเบิกทั้งหมด →')),
+      paid.length ? table([
+        ['วันที่จ่าย', e => when(e.paid_at)],
+        ['รายการ', e => e.title],
+        ['กิจกรรม', e => e.activity_name ?? '-'],
+        ['หมวด', e => e.category],
+        ['จำนวน', e => money(e.paid_satang)],
+        ['ใบเสร็จ', e => h('span', { onclick: ev => ev.stopPropagation() }, fileLink(e.receipt_path, 'เปิดดู'))],
+      ], paid, e => location.hash = 'expenses/' + e.id) : h('p', { className: 'muted' }, 'ยังไม่มีรายจ่าย')));
+}
+
+// เบิกจ่าย: ทุกคนเห็นทุกคำขอ ขอเบิกได้ เหรัญญิกอนุมัติและบันทึกจ่าย
+let expenseFilter = 'all';
+async function renderExpenses(id) {
+  if (id === 'new') return renderExpenseForm();
+  if (id) return renderExpenseDetail(id);
+  let q = sb.from('expense_feed').select('*').order('created_at', { ascending: false }).limit(300);
+  if (expenseFilter !== 'all') q = q.eq('status', expenseFilter);
+  const rows = await q.then(must);
+  const filter = h('select', { 'aria-label': 'สถานะ', style: 'width:auto', onchange: e => { expenseFilter = e.target.value; route(); } },
+    [['all', 'ทั้งหมด'], ...Object.entries(EXP_STATUS).map(([k, [t]]) => [k, t])].map(([v, t]) => h('option', { value: v, selected: v === expenseFilter }, t)));
+  return h('div', { className: 'card' },
+    h('div', { className: 'row', style: 'margin-bottom:8px' }, h('h1', {}, 'เบิกจ่าย'),
+      h('div', { className: 'row', style: 'margin-left:auto' }, filter, h('a', { className: 'btn', href: '#expenses/new' }, '+ ขอเบิกเงิน'))),
+    rows.length ? table([
+      ['วันที่ขอ', e => when(e.created_at)],
+      ['รายการ', e => e.title],
+      ['ผู้ขอ', e => e.requester_name],
+      ['กิจกรรม', e => e.activity_name ?? '-'],
+      ['จำนวน', e => money(e.paid_satang ?? e.amount_satang)],
+      ['สถานะ', e => expChip(e.status)],
+    ], rows, e => location.hash = 'expenses/' + e.id) : h('p', { className: 'muted' }, 'ยังไม่มีคำขอเบิก'));
+}
+
+async function renderExpenseForm() {
+  const [cats, acts] = await Promise.all([
+    sb.from('expense_categories').select('name').eq('active', true).order('sort').then(must),
+    sb.from('activity_budgets').select('*').eq('active', true).order('name').then(must),
+  ]);
+  const hint = h('p', { className: 'muted' });
+  const form = h('form', { className: 'card' },
+    h('p', {}, h('a', { href: '#expenses' }, '← กลับไปรายการ')),
+    h('h1', {}, 'ขอเบิกเงิน'),
+    h('label', { htmlFor: 'x-title' }, 'ซื้อ/จ่ายอะไร'), h('input', { id: 'x-title', name: 'title', required: true, placeholder: 'เช่น ลูกฟุตบอล 2 ลูก' }),
+    h('div', { className: 'grid' },
+      h('div', {}, h('label', { htmlFor: 'x-amt' }, 'จำนวนเงิน (บาท)'), h('input', { id: 'x-amt', name: 'amount', inputMode: 'decimal', required: true })),
+      h('div', {}, h('label', { htmlFor: 'x-cat' }, 'หมวด'), h('select', { id: 'x-cat', name: 'category' }, cats.map(c => h('option', {}, c.name)))),
+      h('div', {}, h('label', { htmlFor: 'x-act' }, 'กิจกรรม'),
+        h('select', { id: 'x-act', name: 'activity', onchange: e => {
+          const a = acts.find(x => x.id === e.target.value);
+          hint.textContent = a?.budget_satang != null
+            ? `งบ ${baht(a.budget_satang)} บาท · ใช้/กันไว้แล้ว ${baht(Number(a.paid_satang) + Number(a.committed_satang))} บาท · คงเหลือ ${baht(a.budget_satang - a.paid_satang - a.committed_satang)} บาท`
+            : '';
+        } }, h('option', { value: '' }, 'ไม่ระบุ (ค่าใช้จ่ายทั่วไป)'), acts.map(a => h('option', { value: a.id }, a.name))))),
+    hint,
+    h('label', { htmlFor: 'x-reason' }, 'เหตุผล / รายละเอียด'), h('textarea', { id: 'x-reason', name: 'reason', rows: 3 }),
+    h('label', { htmlFor: 'x-quote' }, 'ใบเสนอราคาหรือหลักฐาน (ไม่บังคับ · รูปหรือ PDF ไม่เกิน 10 MB)'),
+    h('input', { id: 'x-quote', name: 'quote', type: 'file', accept: Object.keys(EVIDENCE_TYPES).join(',') }),
+    h('p', { className: 'muted' }, 'สมาชิกทุกคนเห็นคำขอเบิกและไฟล์หลักฐาน'),
+    h('div', { className: 'row', style: 'margin-top:12px' }, h('button', { type: 'submit' }, 'ส่งคำขอเบิก')),
+    msgBox());
+  onSubmit(form, async f => {
+    const amount = toSatang(f.amount);
+    if (!amount) throw new Error('กรอกจำนวนเงินเป็นตัวเลข เช่น 800 หรือ 800.50');
+    const file = form.quote.files[0];
+    const quote = file ? await uploadEvidence(file) : null;
+    const id = must(await sb.rpc('request_expense', {
+      p_title: f.title, p_amount_satang: amount, p_category: f.category,
+      p_activity_id: f.activity || null, p_reason: f.reason, p_quote_path: quote,
+    }));
+    toast('ส่งคำขอเบิกแล้ว รอเหรัญญิกอนุมัติ');
+    location.hash = 'expenses/' + id;
+  });
+  return form;
+}
+
+async function renderExpenseDetail(id) {
+  const e = await sb.from('expense_feed').select('*').eq('id', id).single().then(must);
+  const b = e.activity_id ? await sb.from('activity_budgets').select('*').eq('id', e.activity_id).maybeSingle().then(must) : null;
+  const mine = e.requested_by === member.id;
+  const t = can('treasurer');
+
+  const act = async (fn, ok) => {
+    try { await fn(); toast(ok); } catch (err) { toast(thai(err)); }
+    route(); // โหลดสถานะล่าสุดเสมอ เผื่อเหรัญญิกคนอื่นทำไปแล้ว
+  };
+  const withReason = async (title, label, okLabel, rpc, ok) => {
+    const v = await dialogForm(title, [{ name: 'reason', label }], okLabel, true);
+    if (v) act(() => sb.rpc(rpc, { p_id: id, p_reason: v.reason }).then(must), ok);
+  };
+
+  // งบหลังอนุมัติรายการนี้ (เตือนเมื่อเกิน 80% หรือเกินงบ)
+  let budgetWarn = null;
+  if (b?.budget_satang != null && e.status === 'pending') {
+    const after = Number(b.paid_satang) + Number(b.committed_satang) + Number(e.amount_satang);
+    const pct = b.budget_satang > 0 ? after / b.budget_satang : Infinity;
+    if (pct >= 0.8) budgetWarn = h('div', { className: 'warn' },
+      pct > 1 ? '⚠ ถ้าอนุมัติ จะเกินงบกิจกรรม ' : '⚠ ถ้าอนุมัติ จะใช้งบกิจกรรมเกิน 80% ',
+      `(${baht(after)} จาก ${baht(b.budget_satang)} บาท)`);
+  }
+
+  const payForm = t && e.status === 'approved' ? onSubmit(h('form', { className: 'card' },
+    h('h2', {}, 'บันทึกการจ่ายเงินจริง'),
+    h('div', { className: 'grid' },
+      h('div', {}, h('label', { htmlFor: 'p-paid' }, 'ยอดที่จ่ายจริง (บาท)'),
+        h('input', { id: 'p-paid', name: 'paid', inputMode: 'decimal', required: true, value: baht(e.amount_satang).replace(/,/g, '') })),
+      h('div', {}, h('label', { htmlFor: 'p-receipt' }, 'ใบเสร็จหรือสลิปโอนจ่าย (บังคับ)'),
+        h('input', { id: 'p-receipt', name: 'receipt', type: 'file', required: true, accept: Object.keys(EVIDENCE_TYPES).join(',') }))),
+    h('p', { className: 'muted' }, 'บันทึกแล้วยอดเงินกองกลางจะลดลงทันที และแก้ยอดภายหลังไม่ได้'),
+    h('button', { type: 'submit', className: 'ok' }, 'บันทึกการจ่าย'),
+    msgBox()), async (f, form) => {
+      const paid = toSatang(f.paid);
+      if (!paid) throw new Error('กรอกยอดที่จ่ายจริงเป็นตัวเลข');
+      if (!confirm(`ยืนยันว่าจ่ายเงิน ${baht(paid)} บาท สำหรับ "${e.title}" แล้ว?`)) return;
+      const path = await uploadEvidence(form.receipt.files[0]);
+      await act(() => sb.rpc('pay_expense', { p_id: id, p_paid_satang: paid, p_receipt_path: path }).then(must), 'บันทึกการจ่ายแล้ว');
+    }) : null;
+
+  const canCancel = (mine && e.status === 'pending') || (t && ['pending', 'approved'].includes(e.status));
+  const actions = h('div', { className: 'row' },
+    t && e.status === 'pending' ? [
+      h('button', { className: 'ok', onclick: ev => {
+        if (!confirm(`อนุมัติคำขอเบิก ${baht(e.amount_satang)} บาท "${e.title}"?` + (mine ? '\n(คุณเป็นผู้ขอเอง ระบบจะบันทึกไว้ในประวัติ)' : ''))) return;
+        ev.target.disabled = true;
+        act(() => sb.rpc('approve_expense', { p_id: id }).then(must), 'อนุมัติแล้ว');
+      } }, 'อนุมัติ'),
+      h('button', { className: 'danger', onclick: () => withReason('ไม่อนุมัติคำขอเบิก', 'เหตุผล (ผู้ขอจะเห็น)', 'ไม่อนุมัติ', 'reject_expense', 'บันทึกว่าไม่อนุมัติแล้ว') }, 'ไม่อนุมัติ'),
+    ] : null,
+    canCancel ? h('button', { className: 'ghost', onclick: () => withReason('ยกเลิกคำขอเบิก', 'เหตุผลที่ยกเลิก', 'ยกเลิกคำขอ', 'cancel_expense', 'ยกเลิกแล้ว') }, 'ยกเลิกคำขอ') : null);
+
+  return h('div', {},
+    h('p', {}, h('a', { href: '#expenses' }, '← กลับไปรายการ')),
+    h('div', { className: 'card' },
+      h('div', { className: 'row' }, h('h1', {}, e.title), h('div', { style: 'margin-left:auto' }, expChip(e.status))),
+      h('p', { style: 'font-size:1.4rem; margin:4px 0 16px' }, money(e.paid_satang ?? e.amount_satang),
+        e.paid_satang && e.paid_satang !== e.amount_satang ? h('small', { className: 'muted' }, ` (ขอเบิก ${baht(e.amount_satang)} บาท)`) : null),
+      budgetWarn,
+      h('dl', {},
+        h('dt', {}, 'ผู้ขอ'), h('dd', {}, e.requester_name),
+        h('dt', {}, 'กิจกรรม'), h('dd', {}, e.activity_name ?? 'ไม่ระบุ (ค่าใช้จ่ายทั่วไป)'),
+        h('dt', {}, 'หมวด'), h('dd', {}, e.category),
+        h('dt', {}, 'เหตุผล'), h('dd', {}, e.reason ?? '-'),
+        h('dt', {}, 'ใบเสนอราคา'), h('dd', {}, fileLink(e.quote_path, 'เปิดดู')),
+        h('dt', {}, 'ส่งคำขอเมื่อ'), h('dd', {}, when(e.created_at)),
+        e.reviewed_at ? [h('dt', {}, e.status === 'cancelled' ? 'ยกเลิกโดย' : 'ตรวจโดย'), h('dd', {}, `${e.reviewer_name ?? '-'} · ${when(e.reviewed_at)}`)] : null,
+        e.review_note ? [h('dt', {}, 'เหตุผล'), h('dd', {}, e.review_note)] : null,
+        e.paid_at ? [h('dt', {}, 'จ่ายโดย'), h('dd', {}, `${e.payer_name ?? '-'} · ${when(e.paid_at)}`)] : null,
+        e.receipt_path ? [h('dt', {}, 'ใบเสร็จ'), h('dd', {}, fileLink(e.receipt_path, 'เปิดดู'))] : null),
+      actions.childNodes.length ? h('div', { style: 'margin-top:16px' }, actions) : null),
+    payForm);
+}
+
+// งบประมาณ: ทุกคนเห็น ประธาน/แอดมินตั้งกิจกรรมและงบ
+async function renderBudget() {
+  const rows = await sb.from('activity_budgets').select('*').order('name').then(must);
+  const manage = can('president', 'admin');
+  const budgeted = rows.filter(r => r.budget_satang != null);
+  const sum = k => budgeted.reduce((s, r) => s + Number(r[k]), 0);
+  const total = sum('budget_satang'), committed = sum('committed_satang'), paid = sum('paid_satang');
+
+  const usage = r => {
+    if (r.budget_satang == null) return h('span', { className: 'muted' }, 'ไม่ได้ตั้งงบ');
+    const used = Number(r.paid_satang) + Number(r.committed_satang);
+    const pct = r.budget_satang > 0 ? used / r.budget_satang : (used ? Infinity : 0);
+    const level = pct > 1 ? 'bad' : pct >= 0.8 ? 'wait' : 'ok';
+    return h('div', { style: 'min-width:140px' },
+      h('div', { className: 'track' }, h('div', { className: 'fill ' + level, style: `width:${Math.min(pct, 1) * 100}%` })),
+      h('small', {}, Number.isFinite(pct) ? `${Math.round(pct * 100)}%` : 'เกินงบ', ' ',
+        pct > 1 ? h('span', { className: 'chip bad' }, '⚠ เกินงบ') : pct >= 0.8 ? h('span', { className: 'chip wait' }, '⚠ ใกล้เต็ม') : null));
+  };
+
+  const editBudget = async r => {
+    const v = await dialogForm(`แก้ไขกิจกรรม "${r.name}"`, [
+      { name: 'name', label: 'ชื่อกิจกรรม', value: r.name },
+      { name: 'budget', label: 'งบประมาณ (บาท) เว้นว่าง = ไม่ตั้งงบ', value: r.budget_satang != null ? baht(r.budget_satang).replace(/,/g, '') : '', required: false },
+    ], 'บันทึก');
+    if (!v) return;
+    try {
+      const budget = v.budget.trim() ? toSatang(v.budget) : null;
+      if (v.budget.trim() && budget == null) throw new Error('กรอกงบเป็นตัวเลข');
+      must(await sb.from('activities').update({ name: v.name.trim(), budget_satang: budget }).eq('id', r.id));
+      toast('บันทึกแล้ว'); route();
+    } catch (err) { toast(thai(err)); }
+  };
+
+  const add = manage ? onSubmit(h('form', { className: 'card' },
+    h('h2', {}, 'เพิ่มกิจกรรม'),
+    h('div', { className: 'grid' },
+      h('div', {}, h('label', { htmlFor: 'b-name' }, 'ชื่อกิจกรรม'), h('input', { id: 'b-name', name: 'name', required: true, placeholder: 'เช่น กีฬารุ่น 23' })),
+      h('div', {}, h('label', { htmlFor: 'b-budget' }, 'งบประมาณ (บาท · ไม่บังคับ)'), h('input', { id: 'b-budget', name: 'budget', inputMode: 'decimal' })),
+      h('div', {}, h('label', { htmlFor: 'b-desc' }, 'รายละเอียด (ไม่บังคับ)'), h('input', { id: 'b-desc', name: 'description' })),
+      h('button', { type: 'submit' }, 'เพิ่มกิจกรรม')),
+    msgBox()), async f => {
+      const budget = f.budget.trim() ? toSatang(f.budget) : null;
+      if (f.budget.trim() && budget == null) throw new Error('กรอกงบเป็นตัวเลข');
+      must(await sb.from('activities').insert({ name: f.name.trim(), budget_satang: budget, description: f.description.trim() || null }));
+      toast('เพิ่มกิจกรรมแล้ว'); route();
+    }) : null;
+
+  return h('div', {},
+    h('h1', {}, 'งบประมาณ'),
+    h('p', { className: 'muted' }, 'กันไว้ = อนุมัติแล้วแต่ยังไม่จ่าย · คงเหลือ = งบ − กันไว้ − จ่ายแล้ว'),
+    h('div', { className: 'stats' },
+      stat('งบทั้งหมด', money(total)), stat('กันไว้', money(committed)),
+      stat('จ่ายแล้ว', money(paid)), stat('คงเหลือ', money(total - committed - paid))),
+    add,
+    rows.length ? h('div', { className: 'card' }, table([
+      ['กิจกรรม', r => h('div', {}, r.name, r.description ? h('div', { className: 'muted' }, r.description) : null)],
+      ['งบประมาณ', r => r.budget_satang != null ? money(r.budget_satang) : '-'],
+      ['กันไว้', r => money(r.committed_satang)],
+      ['จ่ายแล้ว', r => money(r.paid_satang)],
+      ['คงเหลือ', r => r.budget_satang != null ? money(r.budget_satang - r.committed_satang - r.paid_satang) : '-'],
+      ['ใช้ไป', usage],
+      ...(manage ? [['', r => h('button', { className: 'link', onclick: () => editBudget(r) }, 'แก้ไข')]] : []),
+    ], rows)) : empty('ยังไม่มีกิจกรรม' + (manage ? ' เพิ่มกิจกรรมด้านบนเพื่อเริ่มตั้งงบ' : '')));
+}
+
+// รายงาน: เลือกช่วงวันที่ → ดูตัวอย่าง → ดาวน์โหลด CSV (เปิดใน Excel) หรือพิมพ์เป็น PDF ทุกการส่งออกถูกบันทึก
+let reportState = null;
+async function renderReports() {
+  const staff = can('treasurer', 'president', 'auditor');
+  const now = new Date();
+  reportState ??= { kind: 'expenses', from: isoDay(new Date(now.getFullYear(), now.getMonth(), 1)), to: isoDay(now) };
+  const start = () => new Date(reportState.from + 'T00:00').toISOString();
+  const end = () => new Date(reportState.to + 'T23:59:59.999').toISOString();
+
+  const REPORTS = {
+    expenses: { label: 'รายจ่าย', note: 'รายจ่ายที่จ่ายแล้วตามวันที่จ่าย', allowed: true, load: async () => {
+      const rows = await sb.from('expense_feed').select('*').eq('status', 'paid').gte('paid_at', start()).lte('paid_at', end())
+        .order('paid_at').then(must);
+      return [['วันที่จ่าย', 'รายการ', 'กิจกรรม', 'หมวด', 'ผู้ขอ', 'ผู้อนุมัติ', 'ผู้จ่าย', 'จำนวน (บาท)'],
+        ...rows.map(e => [when(e.paid_at), e.title, e.activity_name ?? '', e.category, e.requester_name, e.reviewer_name ?? '', e.payer_name ?? '', Number(e.paid_satang) / 100])];
+    } },
+    collections: { label: 'รายรับตามรายการเรียกเก็บ', note: 'ยอดสะสมทั้งหมด (ไม่กรองตามวันที่)', allowed: true, load: async () => {
+      const rows = await sb.rpc('charge_summary').then(must);
+      return [['รายการ', 'ครบกำหนด', 'ยอดต่อคน (บาท)', 'จำนวนคน', 'ชำระครบ (คน)', 'เก็บได้ (บาท)', 'ยังค้าง (บาท)'],
+        ...rows.map(c => [c.title, c.due_date ?? '', Number(c.amount_satang) / 100, c.members, c.paid_members, Number(c.collected_satang) / 100, Number(c.outstanding_satang) / 100])];
+    } },
+    income: { label: 'รายรับรายรายการ', note: 'เฉพาะเหรัญญิก ประธาน ผู้ตรวจสอบ · มีชื่อผู้ชำระ', allowed: staff, load: async () => {
+      const rows = await sb.from('ledger_entries').select('*').in('kind', ['income', 'opening_balance']).is('voided_at', null)
+        .gte('created_at', start()).lte('created_at', end()).order('created_at').then(must);
+      return [['วันที่', 'เลขที่', 'รายละเอียด', 'จำนวน (บาท)'],
+        ...rows.map(l => [when(l.created_at), 'TRX-' + String(l.id).padStart(6, '0'), l.description, Number(l.amount_satang) / 100])];
+    } },
+    members: { label: 'สถานะการชำระรายคน', note: 'เฉพาะเหรัญญิก ประธาน ผู้ตรวจสอบ แอดมิน · ยอดปัจจุบัน', allowed: staff || can('admin'), load: async () => {
+      const rows = await sb.from('charge_balances').select('*').order('title').order('student_id').then(must);
+      return [['รายการ', 'รหัสนิสิต', 'ชื่อ', 'ยอด (บาท)', 'ชำระแล้ว (บาท)', 'ค้าง (บาท)', 'สถานะ'],
+        ...rows.map(r => [r.title, r.student_id, r.full_name, Number(r.amount_satang) / 100, Number(r.paid_satang) / 100,
+          Number(r.outstanding_satang) / 100, Number(r.outstanding_satang) === 0 ? 'ชำระครบ' : 'ค้างชำระ'])];
+    } },
+  };
+  const R = REPORTS[reportState.kind]?.allowed ? REPORTS[reportState.kind] : REPORTS.expenses;
+  const [head, ...body] = await R.load();
+
+  const logged = () => sb.rpc('log_export', { p_report: R.label, p_from: reportState.from, p_to: reportState.to }).then(must);
+  const download = async () => {
+    try { await logged(); downloadCsv(`${R.label} ${reportState.from} ถึง ${reportState.to}.csv`, [head, ...body]); }
+    catch (err) { toast(thai(err)); }
+  };
+  const print = async () => { try { await logged(); window.print(); } catch (err) { toast(thai(err)); } };
+
+  const dates = h('div', { className: 'grid no-print' },
+    h('div', {}, h('label', { htmlFor: 'r-from' }, 'ตั้งแต่วันที่'), h('input', { id: 'r-from', type: 'date', value: reportState.from, onchange: e => { reportState.from = e.target.value; route(); } })),
+    h('div', {}, h('label', { htmlFor: 'r-to' }, 'ถึงวันที่'), h('input', { id: 'r-to', type: 'date', value: reportState.to, onchange: e => { reportState.to = e.target.value; route(); } })));
+
+  return h('div', {},
+    h('h1', { className: 'no-print' }, 'รายงาน'),
+    h('div', { className: 'pick-cards no-print' }, Object.entries(REPORTS).filter(([, r]) => r.allowed).map(([k, r]) =>
+      h('button', { className: 'pick-card' + (R === r ? ' on' : ''), onclick: () => { reportState.kind = k; route(); } },
+        h('b', {}, r.label), h('small', {}, r.note)))),
+    h('div', { className: 'card' },
+      dates,
+      h('div', { className: 'row', style: 'margin:16px 0' },
+        h('h2', { style: 'margin:0' }, `${R.label} · ${day(reportState.from)} – ${day(reportState.to)}`),
+        h('div', { className: 'row no-print', style: 'margin-left:auto' },
+          h('button', { onclick: download }, 'ดาวน์โหลด CSV (เปิดใน Excel)'),
+          h('button', { className: 'ghost', onclick: print }, 'พิมพ์ / บันทึก PDF'))),
+      body.length
+        ? table(head.map((label, i) => [label, row => typeof row[i] === 'number' && /บาท/.test(label) ? money(row[i] * 100) : String(row[i])]), body)
+        : h('p', { className: 'muted' }, 'ไม่มีข้อมูลในช่วงนี้'),
+      h('p', { className: 'muted no-print' }, 'ทุกการดาวน์โหลดหรือพิมพ์ถูกบันทึกในประวัติการกระทำ')));
+}
+
+// ประวัติการกระทำ: ผู้ตรวจสอบและแอดมิน
+const TABLE_TH = {
+  members: 'สมาชิก', user_roles: 'บทบาท', activities: 'กิจกรรม', charges: 'รายการเรียกเก็บ', member_charges: 'ยอดเรียกเก็บรายคน',
+  bank_accounts: 'บัญชีรับเงิน', payment_submissions: 'การแจ้งชำระ', submission_allocations: 'การตัดยอด',
+  ledger_entries: 'สมุดบัญชี', expense_requests: 'คำขอเบิก', expense_categories: 'หมวดค่าใช้จ่าย',
+};
+const ACTION_TH = { insert: 'เพิ่ม', update: 'แก้ไข', delete: 'ลบ', export: 'ส่งออกรายงาน' };
+let auditFilter = '';
+
+// สรุปสิ่งที่เปลี่ยน: แก้ไข = ช่องที่ค่าเปลี่ยน, เพิ่ม = ชื่อ/ยอดของรายการ
+function auditDetail(l) {
+  if (l.action === 'update' && l.old_data && l.new_data) {
+    return Object.keys(l.new_data).filter(k => JSON.stringify(l.old_data[k]) !== JSON.stringify(l.new_data[k]))
+      .map(k => `${k}: ${l.old_data[k] ?? '–'} → ${l.new_data[k] ?? '–'}`).join(' · ');
+  }
+  const d = l.new_data ?? l.old_data ?? {};
+  return ['title', 'full_name', 'name', 'student_id', 'role', 'description', 'amount_satang', 'status']
+    .filter(k => d[k] != null).map(k => k === 'amount_satang' ? `${baht(d[k])} บาท` : d[k]).join(' · ');
+}
+
+async function renderAudit() {
+  let q = sb.from('audit_log').select('*').order('id', { ascending: false }).limit(300);
+  if (auditFilter) q = q.eq('table_name', auditFilter);
+  const [rows, people] = await Promise.all([q.then(must), sb.from('members').select('user_id, full_name').then(must)]);
+  const name = new Map(people.map(p => [p.user_id, p.full_name]));
+  const filter = h('select', { style: 'width:auto', 'aria-label': 'ส่วนของระบบ', onchange: e => { auditFilter = e.target.value; route(); } },
+    h('option', { value: '' }, 'ทุกส่วน'), Object.entries(TABLE_TH).map(([k, t]) => h('option', { value: k, selected: k === auditFilter }, t)));
+  return h('div', { className: 'card' },
+    h('div', { className: 'row', style: 'margin-bottom:8px' }, h('h1', {}, 'ประวัติการกระทำ'), h('div', { style: 'margin-left:auto' }, filter)),
+    h('p', { className: 'muted' }, 'บันทึกอัตโนมัติทุกการเพิ่ม แก้ไข และส่งออก แก้ไขหรือลบไม่ได้ (แสดง 300 รายการล่าสุด)'),
+    rows.length ? table([
+      ['เวลา', l => when(l.at)],
+      ['ผู้ทำ', l => l.actor ? (name.get(l.actor) ?? 'ผู้ใช้ที่ไม่อยู่ในรายชื่อ') : 'ระบบ'],
+      ['การกระทำ', l => ACTION_TH[l.action] ?? l.action],
+      ['ส่วน', l => TABLE_TH[l.table_name] ?? l.table_name],
+      ['รายละเอียด', l => h('span', { style: 'word-break:break-word' }, auditDetail(l) || '-')],
+      ['เหตุผล', l => l.reason ?? '-'],
+    ], rows) : h('p', { className: 'muted' }, 'ยังไม่มีประวัติ'));
+}
+
 // ─── กระดิ่งแจ้งเตือน ─────────────────────────────────────────────
 
 const panel = $('#bell-panel');
@@ -791,6 +1260,11 @@ function startLive() {
       const [name, param] = location.hash.slice(1).split('/');
       // ไม่รีเฟรชหน้ารายละเอียดของรายการอื่น เพื่อไม่ให้ข้อความที่พิมพ์อยู่หาย
       if ((name === 'review' && (!param || param === p.new?.id)) || name === 'my-payments' || name === 'home' || !name) route();
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'expense_requests' }, p => {
+      renderNav();
+      const [name, param] = location.hash.slice(1).split('/');
+      if ((name === 'expenses' && (!param || param === p.new?.id)) || ['summary', 'budget', 'home', ''].includes(name)) route();
     })
     .subscribe();
   poll = setInterval(() => { refreshBell(); renderNav(); }, 60000);

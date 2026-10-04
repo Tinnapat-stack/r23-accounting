@@ -127,6 +127,46 @@
   .dot.action { background: var(--red); } .dot.pending { background: var(--amber); }
   .dot.success { background: var(--green); } .dot.info { background: var(--blue); }
 
+  /* การ์ดตัวเลข */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(160px, 45%), 1fr)); gap: 12px; margin-bottom: 20px; }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; }
+  .stat > span { color: var(--muted); font-size: .9rem; }
+  .stat b { display: block; font-size: 1.55rem; margin: 2px 0; font-variant-numeric: tabular-nums; }
+  .stat b .money { font-size: inherit; }
+  .stat small { color: var(--muted); }
+
+  /* กราฟรายรับ–รายจ่าย: สีผ่านการตรวจตาบอดสีแล้ว (น้ำเงิน #2a78d6 / ส้ม #eb6834) */
+  .chart { position: relative; }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: .9rem; color: var(--muted); margin-bottom: 8px; align-items: center; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; }
+  .inc { background: #2a78d6; } .exp { background: #eb6834; }
+  .plot { display: flex; gap: 10px; overflow-x: auto; overflow-y: hidden; padding-top: 8px; }
+  .col { flex: 1 0 48px; display: flex; flex-direction: column; }
+  .bars { height: 200px; display: flex; align-items: flex-end; justify-content: center; gap: 2px; border-bottom: 1px solid var(--line); }
+  .bar { width: min(20px, 42%); border-radius: 4px 4px 0 0; cursor: default; }
+  .bar:hover, .bar:focus { outline: 2px solid var(--text); outline-offset: 1px; }
+  .x { text-align: center; font-size: .8rem; color: var(--muted); padding-top: 6px; white-space: nowrap; }
+  .tip { position: absolute; transform: translate(-50%, calc(-100% - 6px)); pointer-events: none; background: var(--navy);
+         color: #fff; padding: 6px 10px; border-radius: 8px; font-size: .85rem; white-space: nowrap; z-index: 2; }
+
+  /* แถบสัดส่วนและการใช้งบ */
+  .hrow { margin-bottom: 12px; }
+  .track { height: 8px; background: #edf1f7; border-radius: 999px; overflow: hidden; margin-top: 4px; }
+  .fill { height: 100%; background: #2a78d6; border-radius: 999px; }
+  .fill.ok { background: var(--green); } .fill.wait { background: var(--amber); } .fill.bad { background: var(--red); }
+
+  /* ตัวเลือกรายงาน */
+  .pick-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .pick-card { text-align: left; background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 14px; padding: 16px; font-weight: 400; }
+  .pick-card b { display: block; } .pick-card small { color: var(--muted); }
+  .pick-card.on { border-color: var(--navy); box-shadow: inset 0 0 0 1px var(--navy); }
+
+  @media print {
+    #sidebar, #scrim, .topbar, .no-print, #toast { display: none !important; }
+    .shell { margin: 0 !important; } body { background: #fff; } main { padding: 0; max-width: none; }
+    .card { border: 0; box-shadow: none; padding: 0; }
+  }
+
   details.help { margin-top: 12px; background: #f9fafb; border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
   details.help summary { cursor: pointer; font-weight: 600; color: var(--blue); }
   details.help p, details.help ol { margin: 8px 0; }
