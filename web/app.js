@@ -129,6 +129,15 @@ function parseMemberRows(text) {
     .map(([student_id = '', full_name = '', email = '']) => ({ student_id, full_name, email }));
 }
 
+// ไฟล์ตัวอย่างมีแค่หัวตาราง (ไม่มีแถวตัวอย่าง กันลืมลบแล้วนำเข้าคนปลอม)
+// ﻿ ทำให้ Excel อ่านภาษาไทยในไฟล์ CSV ถูก
+function downloadTemplate() {
+  const blob = new Blob(['﻿รหัสนิสิต,ชื่อ-นามสกุล,อีเมล\r\n'], { type: 'text/csv;charset=utf-8' });
+  const a = h('a', { href: URL.createObjectURL(blob), download: 'รายชื่อสมาชิก-ตัวอย่าง.csv' });
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
 async function openSlip(path) {
   const { data, error } = await sb.storage.from('slips').createSignedUrl(path, 600);
   if (error) return toast(thai(error));
@@ -590,8 +599,23 @@ async function renderMembers() {
     h('label', { htmlFor: 'im-rows' }, 'นำเข้าหลายคน: คัดลอก 3 คอลัมน์ (รหัสนิสิต, ชื่อ-นามสกุล, อีเมล) จาก Excel หรือ Google Sheets มาวาง'),
     h('textarea', { id: 'im-rows', name: 'rows', rows: 5, required: true,
                     placeholder: '65010001\tสมชาย ใจดี\tsomchai@gmail.com\n65010002\tสมหญิง รักเรียน\tsomying@gmail.com' }),
-    h('div', { className: 'row', style: 'margin-top:8px' }, h('button', { type: 'submit' }, 'นำเข้า')),
-    msgBox()), async f => {
+    h('div', { className: 'row', style: 'margin-top:8px' },
+      h('button', { type: 'submit' }, 'นำเข้า'),
+      h('button', { type: 'button', className: 'ghost', onclick: downloadTemplate }, 'ดาวน์โหลดไฟล์ตัวอย่าง (.csv)')),
+    msgBox(),
+    h('details', { className: 'help' },
+      h('summary', {}, 'วิธีกรอก'),
+      h('ol', {},
+        h('li', {}, 'กรอกใน Google Sheets หรือ Excel ให้มี 3 คอลัมน์ตามลำดับ: รหัสนิสิต → ชื่อ-นามสกุล → อีเมล (1 แถว = 1 คน)'),
+        h('li', {}, 'ลากเลือกทั้งตาราง (เลือกแถวหัวตารางมาด้วยก็ได้ ระบบข้ามให้) แล้วกด Ctrl + C'),
+        h('li', {}, 'คลิกช่องด้านบน กด Ctrl + V แล้วกด "นำเข้า" ระบบจะถามจำนวนคนให้ตรวจก่อน'),
+        h('li', {}, 'บอกเพื่อนให้สมัครด้วยรหัสนิสิตและอีเมลเดียวกับที่กรอก')),
+      h('p', {}, h('b', {}, 'ระบบจัดการให้: '), 'ข้ามแถวว่างและแถวหัวตาราง ตัดช่องว่างหน้า-หลัง แปลงอีเมลเป็นตัวพิมพ์เล็ก'),
+      h('p', {}, h('b', {}, 'แถวที่ไม่ถูกเพิ่ม: '), 'ข้อมูลไม่ครบ อีเมลผิดรูปแบบ หรือรหัสนิสิต/อีเมลมีในระบบแล้ว ',
+        'แถวอื่นยังถูกบันทึกตามปกติ แก้เฉพาะแถวที่ผิดแล้ววางใหม่ได้ (วางคนเดิมซ้ำจะไม่เกิดข้อมูลซ้ำ)'),
+      h('p', {}, h('b', {}, '⚠ ลบรายชื่อไม่ได้: '), 'ถ้ากรอกผิดให้กด "แก้ไข" ในตารางด้านล่าง ถ้าเพิ่มคนที่ไม่ควรเพิ่มให้กด "ระงับ"'),
+      h('p', {}, h('b', {}, '⚠ Excel: '), 'ตั้งคอลัมน์รหัสนิสิตเป็น "ข้อความ (Text)" ก่อนกรอก ไม่อย่างนั้น Excel อาจตัดเลข 0 ข้างหน้า หรือแสดงเป็น 6.5E+10'),
+      h('p', {}, h('b', {}, 'อีเมล: '), 'ต้องเป็นอีเมลที่เพื่อนจะใช้สมัครจริง ไม่อย่างนั้นจะสมัครไม่ได้'))), async f => {
       const rows = parseMemberRows(f.rows);
       if (!rows.length) throw new Error('ไม่พบรายชื่อ ตรวจว่าวางข้อมูลครบ 3 คอลัมน์');
       if (!confirm(`นำเข้า ${rows.length} คน?`)) return;
