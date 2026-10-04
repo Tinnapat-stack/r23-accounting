@@ -29,6 +29,12 @@ jobs:
           node-version: 22
       - run: npm ci
       - run: npm test
+      # แนบเลขเวอร์ชันท้ายไฟล์โค้ด ให้เบราว์เซอร์โหลดของใหม่ทันทีหลังขึ้นเว็บ ไม่ใช้ไฟล์เก่าที่จำไว้
+      - run: |
+          v=${GITHUB_SHA::8}
+          sed -i "s#src=\"./app.js\"#src=\"./app.js?v=$v\"#" web/index.html
+          sed -i "s#from './config.js'#from './config.js?v=$v'#" web/app.js
+          grep -q "app.js?v=$v" web/index.html
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web
