@@ -171,22 +171,58 @@ async function pendingCount() {
 
 // ─── หน้าต่าง ๆ ─────────────────────────────────────────────────
 
-const PAGES = {
-  home: { label: 'หน้าหลัก', allowed: () => true, render: renderHome },
-  pay: { label: 'แจ้งชำระ', allowed: () => !!member?.active, render: renderPay },
-  'my-payments': { label: 'การชำระของฉัน', allowed: () => !!member?.active, render: renderMyPayments },
-  review: { label: 'ตรวจสลิป', allowed: () => can('treasurer'), render: renderReview },
-  charges: { label: 'รายการเรียกเก็บ', allowed: () => can('treasurer', 'president', 'auditor', 'admin'), render: renderCharges },
-  members: { label: 'สมาชิกและตั้งค่า', allowed: () => can('admin'), render: renderMembers },
+// ไอคอนเส้น (SVG คงที่ ไม่มีข้อมูลผู้ใช้ปน)
+const svg = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+const ICONS = {
+  home: svg('<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/>'),
+  pay: svg('<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M16 15h2"/>'),
+  receipt: svg('<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/>'),
+  check: svg('<path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>'),
+  list: svg('<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>'),
+  users: svg('<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M16 4a4 4 0 0 1 0 8M22 21c0-3-2-5-5-6"/>'),
 };
 
-async function renderTabs() {
+const PAGES = {
+  home: { group: 'เมนูหลัก', icon: 'home', label: 'หน้าหลัก', allowed: () => true, render: renderHome },
+  pay: { group: 'เมนูหลัก', icon: 'pay', label: 'แจ้งชำระ', allowed: () => !!member?.active, render: renderPay },
+  'my-payments': { group: 'เมนูหลัก', icon: 'receipt', label: 'การชำระของฉัน', allowed: () => !!member?.active, render: renderMyPayments },
+  review: { group: 'การเงิน', icon: 'check', label: 'ตรวจสลิป', allowed: () => can('treasurer'), render: renderReview },
+  charges: { group: 'การเงิน', icon: 'list', label: 'รายการเรียกเก็บ', allowed: () => can('treasurer', 'president', 'auditor', 'admin'), render: renderCharges },
+  members: { group: 'ระบบ', icon: 'users', label: 'สมาชิกและตั้งค่า', allowed: () => can('admin'), render: renderMembers },
+};
+
+// เมนูด้านซ้าย จัดกลุ่มตาม group และแสดงเฉพาะหน้าที่บทบาทนี้เข้าได้
+async function renderNav() {
   const [current] = location.hash.slice(1).split('/');
   const pending = can('treasurer') ? await pendingCount() : 0;
-  $('#tabs').replaceChildren(...Object.entries(PAGES).filter(([, p]) => p.allowed()).map(([key, p]) =>
-    h('a', { href: '#' + key, className: (current || 'home') === key ? 'on' : '' },
-      p.label, key === 'review' && pending ? h('span', { className: 'count' }, pending) : null)));
+  const items = [];
+  let group;
+  for (const [key, p] of Object.entries(PAGES)) {
+    if (!p.allowed()) continue;
+    if (p.group !== group) items.push(h('div', { className: 'group' }, group = p.group));
+    items.push(h('a', { href: '#' + key, className: (current || 'home') === key ? 'on' : null },
+      h('span', { className: 'ico', innerHTML: ICONS[p.icon] }), p.label,
+      key === 'review' && pending ? h('span', { className: 'count' }, pending) : null));
+  }
+  $('#nav').replaceChildren(...items);
 }
+
+// ปุ่ม ☰: จอกว้างซ่อน/แสดงเมนู (จำไว้) จอแคบเปิดลิ้นชัก
+const wide = matchMedia('(min-width: 1024px)');
+try { if (localStorage.getItem('navCollapsed') === '1') document.body.classList.add('nav-collapsed'); } catch {}
+function setDrawer(open) {
+  document.body.classList.toggle('nav-open', open);
+  $('#menu-btn').setAttribute('aria-expanded', String(open));
+}
+$('#menu-btn').onclick = () => {
+  if (!wide.matches) return setDrawer(!document.body.classList.contains('nav-open'));
+  const collapsed = document.body.classList.toggle('nav-collapsed');
+  $('#menu-btn').setAttribute('aria-expanded', String(!collapsed));
+  try { localStorage.setItem('navCollapsed', collapsed ? '1' : '0'); } catch {}
+};
+$('#scrim').onclick = () => setDrawer(false);
+$('#nav').addEventListener('click', e => { if (e.target.closest('a')) setDrawer(false); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') setDrawer(false); });
 
 // หน้าหลัก: ฉันต้องทำอะไร มีอะไรค้าง
 async function renderHome() {
@@ -748,16 +784,16 @@ function startLive() {
   stopLive();
   channel = sb.channel('live-' + me.id)
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${me.id}` }, () => {
-      refreshBell(); renderTabs();
+      refreshBell(); renderNav();
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'payment_submissions' }, p => {
-      renderTabs();
+      renderNav();
       const [name, param] = location.hash.slice(1).split('/');
       // ไม่รีเฟรชหน้ารายละเอียดของรายการอื่น เพื่อไม่ให้ข้อความที่พิมพ์อยู่หาย
       if ((name === 'review' && (!param || param === p.new?.id)) || name === 'my-payments' || name === 'home' || !name) route();
     })
     .subscribe();
-  poll = setInterval(() => { refreshBell(); renderTabs(); }, 60000);
+  poll = setInterval(() => { refreshBell(); renderNav(); }, 60000);
   refreshBell();
 }
 
@@ -767,7 +803,7 @@ function stopLive() {
   channel = null;
 }
 
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshBell(); renderTabs(); } });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshBell(); renderNav(); } });
 
 // ─── เข้าสู่ระบบ ─────────────────────────────────────────────────
 
@@ -803,6 +839,8 @@ function show(view) {
   $('#boot').hidden = true;
   document.querySelectorAll('[data-view]').forEach(el => el.hidden = el.dataset.view !== view);
   $('#user-bar').hidden = $('#whoami').hidden = view !== 'app';
+  document.body.classList.toggle('authed', view === 'app');
+  if (view !== 'app') { setDrawer(false); $('#page-title').textContent = 'ระบบบัญชี รุ่นที่ 23'; }
 }
 
 let recovering = false, seq = 0, profileReady = null;
@@ -827,9 +865,10 @@ async function route() {
     }
     await profileReady;
     show('app');
-    renderTabs();
+    renderNav();
     const [name, param] = location.hash.slice(1).split('/');
     const p = PAGES[name]?.allowed() ? PAGES[name] : PAGES.home;
+    $('#page-title').textContent = p.label;
     if (!page.firstChild) page.append(h('p', { className: 'muted' }, 'กำลังโหลด…'));
     const el = await p.render(param);
     if (run === seq) page.replaceChildren(el);
