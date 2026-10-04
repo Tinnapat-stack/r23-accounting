@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ระบบบัญชี รุ่นที่ 23</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy: #14213d; --bg: #f7f8fa; --card: #fff; --text: #1f2937; --muted: #6b7280;
+    --line: #e5e7eb; --green: #15803d; --red: #b91c1c; --amber: #b45309; --blue: #1d4ed8;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Sarabun', system-ui, sans-serif; background: var(--bg); color: var(--text); }
+  header { background: var(--navy); color: #fff; padding: 12px 16px; display: flex; align-items: center; gap: 12px; position: relative; }
+  header b { font-size: 1.1rem; }
+  header small { display: block; opacity: .75; }
+  #whoami { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+  #whoami-name { font-weight: 600; }
+  #whoami .chip { background: rgba(255,255,255,.15); color: #fff; font-size: .8rem; }
+  #whoami .chip.bad { background: #fee2e2; color: var(--red); }
+  header .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  main { max-width: 1040px; margin: 0 auto; padding: 20px 16px 48px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px;
+          box-shadow: 0 1px 3px rgba(0,0,0,.04); margin-bottom: 16px; }
+  .narrow { max-width: 420px; margin: 32px auto; }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; } h2 { font-size: 1.15rem; margin: 0 0 12px; }
+  .muted { color: var(--muted); }
+  label { display: block; font-weight: 600; margin: 12px 0 4px; }
+  input, select, textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px;
+                            font: inherit; background: #fff; color: inherit; }
+  input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
+  button, .btn { font: inherit; font-weight: 600; padding: 9px 16px; border-radius: 10px; border: 1px solid var(--navy);
+           background: var(--navy); color: #fff; cursor: pointer; text-decoration: none; display: inline-block; }
+  button.ghost, .btn.ghost { background: transparent; color: inherit; border-color: currentColor; }
+  button.danger { background: var(--red); border-color: var(--red); }
+  button.ok { background: var(--green); border-color: var(--green); }
+  button.link { background: none; border: 0; padding: 0; color: var(--blue); font-weight: 600; }
+  button:disabled { opacity: .6; cursor: wait; }
+  form.narrow button[type=submit] { width: 100%; margin-top: 16px; }
+  .links { display: flex; justify-content: space-between; margin-top: 14px; flex-wrap: wrap; gap: 8px; }
+  a { color: var(--navy); }
+  .msg { margin-top: 12px; padding: 10px 12px; border-radius: 10px; }
+  .msg.err { background: #fef2f2; color: var(--red); } .msg.ok { background: #f0fdf4; color: var(--green); }
+  .warn { background: #fffbeb; border: 1px solid #fcd34d; color: #78350f; border-radius: 10px; padding: 10px 12px; margin: 12px 0; }
+  .chip { display: inline-block; padding: 1px 10px; border-radius: 999px; font-size: .9rem; white-space: nowrap;
+          background: #eef2ff; color: var(--navy); }
+  .chip.ok { background: #dcfce7; color: var(--green); } .chip.wait { background: #fef3c7; color: var(--amber); }
+  .chip.bad { background: #fee2e2; color: var(--red); } .chip.muted { background: #f3f4f6; color: var(--muted); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 0 12px; align-items: end; }
+  .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+  @media (max-width: 720px) { .split { grid-template-columns: 1fr; } }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }
+  dt { color: var(--muted); } dd { margin: 0; }
+  .slip { width: 100%; max-height: 640px; object-fit: contain; border: 1px solid var(--line); border-radius: 10px; background: #f3f4f6; }
+  .money { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  /* แท็บเมนู */
+  nav.tabs { display: flex; gap: 4px; overflow-x: auto; margin-bottom: 16px; border-bottom: 1px solid var(--line); }
+  nav.tabs a { padding: 10px 14px; text-decoration: none; color: var(--muted); font-weight: 600; white-space: nowrap;
+               border-bottom: 3px solid transparent; }
+  nav.tabs a.on { color: var(--navy); border-color: var(--navy); }
+  .count { display: inline-block; min-width: 20px; padding: 0 6px; margin-left: 4px; border-radius: 999px;
+           background: var(--amber); color: #fff; font-size: .8rem; text-align: center; }
+
+  /* ตาราง: บนมือถือเปลี่ยนเป็นการ์ด */
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr.click { cursor: pointer; } tr.click:hover { background: #f9fafb; }
+  td label { display: inline-flex; gap: 4px; font-weight: 400; margin: 0 12px 4px 0; white-space: nowrap; }
+  td input[type=checkbox] { width: auto; }
+  @media (max-width: 640px) {
+    table.rt thead { display: none; }
+    table.rt tr { display: block; border: 1px solid var(--line); border-radius: 12px; margin-bottom: 10px; padding: 6px 10px; }
+    table.rt td { display: flex; justify-content: space-between; gap: 12px; border: 0; padding: 6px 0; text-align: right; }
+    table.rt td::before { content: attr(data-label); font-weight: 600; color: var(--muted); text-align: left; }
+  }
+
+  /* รายการที่เลือกชำระ */
+  .pick { display: grid; grid-template-columns: auto 1fr 140px; gap: 8px; align-items: center; padding: 8px 0;
+          border-bottom: 1px solid var(--line); }
+  .pick input[type=checkbox] { width: 20px; height: 20px; }
+  .other { display: grid; grid-template-columns: 1fr 1.4fr 120px auto; gap: 8px; margin-top: 8px; }
+  @media (max-width: 640px) { .other { grid-template-columns: 1fr 1fr; } .pick { grid-template-columns: auto 1fr; } .pick input[type=text] { grid-column: 2; } }
+
+  /* กระดิ่งแจ้งเตือน */
+  #bell { position: relative; padding: 6px 12px; }
+  #bell .count { position: absolute; top: -6px; right: -6px; background: var(--red); }
+  #bell-panel { position: absolute; right: 16px; top: calc(100% + 4px); width: min(380px, calc(100vw - 32px));
+                max-height: 70vh; overflow-y: auto; background: #fff; color: var(--text); border: 1px solid var(--line);
+                border-radius: 14px; box-shadow: 0 10px 30px rgba(0,0,0,.15); z-index: 10; }
+  .bell-head { display: flex; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .note { display: flex; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); text-decoration: none; color: inherit; }
+  .note.unread { background: #eff6ff; }
+  .note small { display: block; color: var(--muted); }
+  .dot { flex: none; width: 10px; height: 10px; border-radius: 50%; margin-top: 7px; }
+  .dot.action { background: var(--red); } .dot.pending { background: var(--amber); }
+  .dot.success { background: var(--green); } .dot.info { background: var(--blue); }
+
+  #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--navy); color: #fff;
+           padding: 10px 18px; border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.2); z-index: 20; max-width: calc(100vw - 32px); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <b>ระบบบัญชี รุ่นที่ 23</b><small>เอกการเมืองการปกครอง มหาวิทยาลัยมหาสารคาม</small>
+    <div id="whoami" hidden><span id="whoami-name"></span> <span id="whoami-roles"></span></div>
+  </div>
+  <div class="right" id="user-bar" hidden>
+    <button id="bell" class="ghost" aria-label="การแจ้งเตือน">🔔<span class="count" id="bell-count" hidden></span></button>
+    <button id="logout" class="ghost">ออกจากระบบ</button>
+  </div>
+  <div id="bell-panel" hidden></div>
+</header>
+
+<main>
+  <p id="boot" class="muted">กำลังโหลด…</p>
+
+  <!-- เข้าสู่ระบบ -->
+  <form data-view="login" class="card narrow" hidden>
+    <h1>เข้าสู่ระบบ</h1>
+    <p class="muted">โปร่งใส ตรวจสอบได้ ทุกการใช้จ่ายมีหลักฐาน</p>
+    <label for="li-email">อีเมล</label>
+    <input id="li-email" name="email" type="email" autocomplete="email" required>
+    <label for="li-pass">รหัสผ่าน</label>
+    <input id="li-pass" name="password" type="password" autocomplete="current-password" required>
+    <button type="submit">เข้าสู่ระบบ</button>
+    <div class="links"><a href="#signup">สมัครใช้งาน</a><a href="#forgot">ลืมรหัสผ่าน</a></div>
+    <div class="msg" role="status" hidden></div>
+  </form>
+
+  <!-- สมัครใช้งาน -->
+  <form data-view="signup" class="card narrow" hidden>
+    <h1>สมัครใช้งาน</h1>
+    <p class="muted">ใช้รหัสนิสิตและอีเมลเดียวกับที่แอดมินลงทะเบียนไว้</p>
+    <label for="su-sid">รหัสนิสิต</label>
+    <input id="su-sid" name="student_id" inputmode="numeric" required>
+    <label for="su-email">อีเมล</label>
+    <input id="su-email" name="email" type="email" autocomplete="email" required>
+    <label for="su-pass">รหัสผ่าน (อย่างน้อย 8 ตัว)</label>
+    <input id="su-pass" name="password" type="password" autocomplete="new-password" minlength="8" required>
+    <button type="submit">สมัครใช้งาน</button>
+    <div class="links"><a href="#login">มีบัญชีแล้ว? เข้าสู่ระบบ</a></div>
+    <div class="msg" role="status" hidden></div>
+  </form>
+
+  <!-- ลืมรหัสผ่าน -->
+  <form data-view="forgot" class="card narrow" hidden>
+    <h1>ลืมรหัสผ่าน</h1>
+    <p class="muted">ระบบจะส่งลิงก์ตั้งรหัสผ่านใหม่ไปที่อีเมลของคุณ</p>
+    <label for="fg-email">อีเมล</label>
+    <input id="fg-email" name="email" type="email" autocomplete="email" required>
+    <button type="submit">ส่งลิงก์</button>
+    <div class="links"><a href="#login">กลับไปเข้าสู่ระบบ</a></div>
+    <div class="msg" role="status" hidden></div>
+  </form>
+
+  <!-- ตั้งรหัสผ่านใหม่ (เปิดจากลิงก์ในอีเมล) -->
+  <form data-view="reset" class="card narrow" hidden>
+    <h1>ตั้งรหัสผ่านใหม่</h1>
+    <label for="rs-pass">รหัสผ่านใหม่ (อย่างน้อย 8 ตัว)</label>
+    <input id="rs-pass" name="password" type="password" autocomplete="new-password" minlength="8" required>
+    <button type="submit">บันทึกรหัสผ่าน</button>
+    <div class="msg" role="status" hidden></div>
+  </form>
+
+  <!-- หน้าหลังเข้าสู่ระบบ: เมนูและเนื้อหาสร้างจาก app.js ตามบทบาท -->
+  <section data-view="app" hidden>
+    <nav class="tabs" id="tabs" aria-label="เมนูหลัก"></nav>
+    <div id="page"></div>
+  </section>
+</main>
+
+<div id="toast" role="status" hidden></div>
+<script type="module" src="./app.js"></script>
+</body>
+</html>
