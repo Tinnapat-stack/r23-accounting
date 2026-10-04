@@ -1,0 +1,67 @@
+# สำรองฐานข้อมูลและไฟล์สลิป/ใบเสร็จทุกวัน เวลา 03:00 (เวลาไทย) หรือกดรันเองที่แท็บ Actions
+# ไฟล์สำรองถูกเข้ารหัสด้วย BACKUP_PASSPHRASE ก่อนเก็บ เพราะ repo เป็น Public (คนที่ล็อกอิน GitHub ดาวน์โหลด artifact ได้)
+# ต้องตั้ง Secrets: SUPABASE_DB_URL, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, BACKUP_PASSPHRASE (วิธีอยู่ใน README)
+name: Backup
+
+on:
+  schedule:
+    - cron: '0 20 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+    steps:
+      # รอบตั้งเวลาที่ยังไม่ได้ตั้ง Secrets ให้ข้ามเงียบ ๆ (ไม่ส่งอีเมลแจ้งล้มเหลวทุกวัน) ส่วนกดรันเองให้ล้มเพื่อเห็นปัญหา
+      - name: ตรวจว่าตั้ง Secrets ครบ
+        id: check
+        run: |
+          for v in SUPABASE_DB_URL SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY BACKUP_PASSPHRASE; do
+            if [ -z "${!v}" ]; then
+              if [ "${{ github.event_name }}" = "schedule" ]; then echo "::notice::ยังไม่ได้ตั้ง secret $v ข้ามการสำรอง"; exit 0; fi
+              echo "::error::ยังไม่ได้ตั้ง secret $v (ดู README หัวข้อสำรองข้อมูล)"; exit 1
+            fi
+          done
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+      - if: steps.check.outputs.ready == 'true'
+        uses: actions/checkout@v4
+      - if: steps.check.outputs.ready == 'true'
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - if: steps.check.outputs.ready == 'true'
+        name: สำรองฐานข้อมูล
+        run: |
+          mkdir -p backup
+          supabase db dump --db-url "$SUPABASE_DB_URL" -f backup/roles.sql --role-only
+          supabase db dump --db-url "$SUPABASE_DB_URL" -f backup/schema.sql
+          supabase db dump --db-url "$SUPABASE_DB_URL" -f backup/data.sql --use-copy --data-only
+      - if: steps.check.outputs.ready == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - if: steps.check.outputs.ready == 'true'
+        name: สำรองไฟล์สลิปและใบเสร็จ
+        run: node scripts/storage-backup.mjs backup backup/storage
+      - if: steps.check.outputs.ready == 'true'
+        name: บีบอัดและเข้ารหัส
+        run: |
+          name="r23-backup-$(TZ=Asia/Bangkok date +%Y%m%d-%H%M)"
+          tar -czf backup.tar.gz backup
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -in backup.tar.gz -out "$name.tar.gz.enc" -pass env:BACKUP_PASSPHRASE
+          rm -rf backup backup.tar.gz
+          ls -lh "$name.tar.gz.enc"
+      - if: steps.check.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: r23-backup-${{ github.run_number }}
+          path: r23-backup-*.tar.gz.enc
+          retention-days: 90

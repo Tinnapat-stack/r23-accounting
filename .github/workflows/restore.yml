@@ -1,0 +1,60 @@
+# กู้คืนข้อมูลจากไฟล์สำรอง ลงโปรเจ็กต์ Supabase ที่สร้างใหม่และว่างเปล่าเท่านั้น
+# รันเองที่แท็บ Actions → Restore → Run workflow แล้วใส่เลข run ของ Backup ที่ต้องการ
+# ต้องตั้ง Secrets ของโปรเจ็กต์ปลายทาง: RESTORE_DB_URL, RESTORE_SUPABASE_URL, RESTORE_SERVICE_ROLE_KEY
+# และ BACKUP_PASSPHRASE ตัวเดียวกับตอนสำรอง
+name: Restore
+
+on:
+  workflow_dispatch:
+    inputs:
+      backup_run_id:
+        description: 'เลข run ของ Backup (ตัวเลขท้ายลิงก์ เช่น .../actions/runs/123456789)'
+        required: true
+      confirm:
+        description: 'พิมพ์ "กู้คืนลงโปรเจ็กต์ใหม่" เพื่อยืนยันว่าปลายทางเป็นโปรเจ็กต์ใหม่ที่ว่างเปล่า'
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    env:
+      RESTORE_DB_URL: ${{ secrets.RESTORE_DB_URL }}
+      SUPABASE_URL: ${{ secrets.RESTORE_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.RESTORE_SERVICE_ROLE_KEY }}
+      BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+    steps:
+      - name: ตรวจการยืนยันและ Secrets
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [ "$CONFIRM" != "กู้คืนลงโปรเจ็กต์ใหม่" ]; then echo "::error::ข้อความยืนยันไม่ตรง"; exit 1; fi
+          for v in RESTORE_DB_URL SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY BACKUP_PASSPHRASE; do
+            if [ -z "${!v}" ]; then echo "::error::ยังไม่ได้ตั้ง secret ของปลายทาง ($v)"; exit 1; fi
+          done
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.backup_run_id }}
+          github-token: ${{ github.token }}
+          path: artifact
+      - name: ถอดรหัสและแตกไฟล์
+        run: |
+          file=$(find artifact -name '*.tar.gz.enc' | head -1)
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in "$file" -out backup.tar.gz -pass env:BACKUP_PASSPHRASE
+          tar -xzf backup.tar.gz
+      - name: กู้คืนฐานข้อมูล
+        run: |
+          sudo apt-get install -y -qq postgresql-client > /dev/null
+          psql --single-transaction --variable ON_ERROR_STOP=1 \
+            --file backup/roles.sql --file backup/schema.sql \
+            --command 'SET session_replication_role = replica' \
+            --file backup/data.sql --dbname "$RESTORE_DB_URL"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: กู้คืนไฟล์สลิปและใบเสร็จ
+        run: node scripts/storage-backup.mjs restore backup/storage

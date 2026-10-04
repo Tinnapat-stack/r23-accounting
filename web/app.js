@@ -209,9 +209,11 @@ const ICONS = {
   budget: svg('<path d="M21 12a9 9 0 1 1-9-9v9z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/>'),
   report: svg('<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>'),
   history: svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+  help: svg('<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 4.9.7c0 1.7-2.4 2.3-2.4 3.8M12 17h.01"/>'),
   users: svg('<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M16 4a4 4 0 0 1 0 8M22 21c0-3-2-5-5-6"/>'),
 };
 
+const MANUALS = 'https://github.com/Tinnapat-stack/r23-accounting/blob/main/docs';
 const active = () => !!member?.active;
 const PAGES = {
   home: { group: 'เมนูหลัก', icon: 'home', label: 'หน้าหลัก', allowed: () => true, render: renderHome },
@@ -242,7 +244,12 @@ async function renderNav() {
       h('span', { className: 'ico', innerHTML: ICONS[p.icon] }), p.label,
       badge[key] ? h('span', { className: 'count' }, badge[key]) : null));
   }
-  $('#nav').replaceChildren(...items);
+  // คู่มืออยู่ใน repo (GitHub แสดงไฟล์ Markdown ให้อ่านได้)
+  const manual = (file, label) => h('a', { href: `${MANUALS}/${file}.md`, target: '_blank', rel: 'noopener' },
+    h('span', { className: 'ico', innerHTML: ICONS.help }), label);
+  items.push(h('div', { className: 'group' }, 'ช่วยเหลือ'), manual('คู่มือสมาชิก', 'คู่มือสมาชิก'),
+    can('treasurer', 'president', 'auditor', 'admin') ? manual('คู่มือผู้ดูแล', 'คู่มือผู้ดูแล') : null);
+  $('#nav').replaceChildren(...items.filter(Boolean));
 }
 
 // ปุ่ม ☰: จอกว้างซ่อน/แสดงเมนู (จำไว้) จอแคบเปิดลิ้นชัก
