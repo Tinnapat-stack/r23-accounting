@@ -109,7 +109,7 @@ await as(null, `insert into charges (title, amount_satang) values ('ค่าก
 await as(null, `insert into member_charges (charge_id, member_id, amount_satang, paid_satang)
   select c.id, m.id, 50000, case when m.student_id = '5' then 50000 else 0 end from charges c, members m`);
 assert.deepEqual(await summary('bob'), {
-  opening_satang: 600000, income_satang: 300000, expense_satang: 180000, balance_satang: 720000,
+  opening_satang: 600000, income_satang: 300000, expense_satang: 180000, refund_satang: 0, balance_satang: 720000,
   pending_slips: 0, pending_expenses: 0, approved_unpaid_satang: 10000,
 });
 const cs = await one('bob', `select * from charge_summary()`);

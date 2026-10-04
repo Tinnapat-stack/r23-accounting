@@ -8,7 +8,7 @@ const ROLE_TH = { member: 'สมาชิก', treasurer: 'เหรัญญ�
 const EXTRA_ROLES = ['treasurer', 'president', 'auditor', 'admin'];
 const STATUS = {
   pending: ['รอตรวจสอบ', 'wait'], confirmed: ['ยืนยันแล้ว', 'ok'],
-  rejected: ['ไม่ผ่านการตรวจสอบ', 'bad'], cancelled: ['ยกเลิกแล้ว', 'muted'],
+  rejected: ['ไม่ผ่านการตรวจสอบ', 'bad'], cancelled: ['ยกเลิกแล้ว', 'muted'], voided: ['ยกเลิกหลังยืนยัน', 'bad'],
 };
 const KIND_TH = { action: 'ต้องดำเนินการ', pending: 'รอตรวจสอบ', success: 'สำเร็จ', info: 'ข้อมูล' };
 const REJECT_REASONS = ['ยอดเงินไม่ตรง', 'สลิปไม่ชัด', 'ไม่พบรายการเงินเข้า', 'โอนผิดบัญชี', 'พบรายการซ้ำ', 'ข้อมูลไม่ตรง', 'อื่น ๆ'];
@@ -109,7 +109,8 @@ function dialogForm(title, fields, okLabel, danger = false) {
       h('h2', {}, title),
       fields.map(f => [
         h('label', { htmlFor: 'd-' + f.name }, f.label),
-        h('input', { id: 'd-' + f.name, name: f.name, value: f.value ?? '', type: f.type ?? 'text', required: f.required !== false }),
+        h('input', { id: 'd-' + f.name, name: f.name, type: f.type ?? 'text', accept: f.accept,
+                     value: f.type === 'file' ? null : (f.value ?? ''), required: f.required !== false }),
       ]),
       h('div', { className: 'row', style: 'margin-top:16px; justify-content:flex-end' },
         h('button', { type: 'button', className: 'ghost', onclick: () => done(null) }, 'ยกเลิก'),
@@ -153,6 +154,15 @@ async function openFile(bucket, path) {
 }
 const openSlip = path => openFile('slips', path);
 const fileLink = (path, label) => path ? h('button', { className: 'link', onclick: () => openFile('evidence', path) }, label) : '-';
+
+// สลิปโอนเงิน: รูปเท่านั้น ไม่เกิน 5 MB เก็บในโฟลเดอร์ของผู้อัปโหลด (bucket slips ไม่เปิดให้สมาชิกคนอื่นเห็น)
+async function uploadSlip(file) {
+  if (!file || !SLIP_TYPES[file.type]) throw new Error('สลิปต้องเป็นรูป JPG, PNG หรือ WEBP');
+  if (file.size > 5 * 1024 * 1024) throw new Error('ไฟล์สลิปใหญ่เกิน 5 MB');
+  const path = `${me.id}/${crypto.randomUUID()}.${SLIP_TYPES[file.type]}`;
+  must(await sb.storage.from('slips').upload(path, file, { contentType: file.type }));
+  return path;
+}
 
 // ใบเสนอราคา/ใบเสร็จ: รูปหรือ PDF ไม่เกิน 10 MB เก็บในโฟลเดอร์ของผู้อัปโหลด
 const EVIDENCE_TYPES = { ...SLIP_TYPES, 'application/pdf': 'pdf' };
@@ -209,6 +219,7 @@ const ICONS = {
   budget: svg('<path d="M21 12a9 9 0 1 1-9-9v9z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/>'),
   report: svg('<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>'),
   history: svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+  refund: svg('<path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>'),
   help: svg('<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 4.9.7c0 1.7-2.4 2.3-2.4 3.8M12 17h.01"/>'),
   users: svg('<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M16 4a4 4 0 0 1 0 8M22 21c0-3-2-5-5-6"/>'),
 };
@@ -223,6 +234,7 @@ const PAGES = {
   expenses: { group: 'เมนูหลัก', icon: 'money', label: 'เบิกจ่าย', allowed: active, render: renderExpenses },
   review: { group: 'การเงิน', icon: 'check', label: 'ตรวจสลิป', allowed: () => can('treasurer'), render: renderReview },
   charges: { group: 'การเงิน', icon: 'list', label: 'รายการเรียกเก็บ', allowed: () => can('treasurer', 'president', 'auditor', 'admin'), render: renderCharges },
+  refunds: { group: 'การเงิน', icon: 'refund', label: 'คืนเงิน', allowed: () => can('treasurer', 'auditor'), render: renderRefunds },
   budget: { group: 'การเงิน', icon: 'budget', label: 'งบประมาณ', allowed: active, render: renderBudget },
   reports: { group: 'การเงิน', icon: 'report', label: 'รายงาน', allowed: active, render: renderReports },
   members: { group: 'ระบบ', icon: 'users', label: 'สมาชิกและตั้งค่า', allowed: () => can('admin'), render: renderMembers },
@@ -419,8 +431,7 @@ async function renderPay() {
 
     const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer()))]
       .map(b => b.toString(16).padStart(2, '0')).join('');
-    const path = `${me.id}/${crypto.randomUUID()}.${SLIP_TYPES[file.type]}`;
-    must(await sb.storage.from('slips').upload(path, file, { contentType: file.type }));
+    const path = await uploadSlip(file);
     must(await sb.rpc('submit_payment', {
       p_amount_satang: amount,
       p_transferred_at: new Date(f.transferred_at).toISOString(),
@@ -438,11 +449,12 @@ async function renderPay() {
 }
 
 async function renderMyPayments() {
-  const [rows, credit] = await Promise.all([
+  const [rows, credit, refunds] = await Promise.all([
     sb.from('payment_submissions')
       .select('*, submission_allocations(amount_satang, member_charges(charges(title)))')
       .eq('member_id', member.id).order('created_at', { ascending: false }).then(must),
     sb.from('member_credit').select('credit_satang').eq('member_id', member.id).maybeSingle().then(must),
+    sb.from('refunds').select('*, member_charges(charges(title))').eq('member_id', member.id).order('created_at', { ascending: false }).then(must),
   ]);
   if (!rows.length) return empty('ยังไม่มีรายการชำระเงิน เมื่อแจ้งชำระแล้ว รายการจะแสดงที่นี่',
     h('a', { className: 'btn', href: '#pay' }, 'แจ้งชำระเงิน'));
@@ -463,11 +475,17 @@ async function renderMyPayments() {
       ['รายการ', r => r.submission_allocations.length
         ? r.submission_allocations.map(a => h('div', {}, a.member_charges?.charges?.title ?? 'จ่ายแทนเพื่อน', ' ', money(a.amount_satang)))
         : 'เก็บเป็นเครดิต'],
-      ['สถานะ', r => h('div', {}, chip(r.status), r.reject_reason ? h('div', { className: 'muted' }, 'เหตุผล: ' + r.reject_reason) : null)],
+      ['สถานะ', r => h('div', {}, chip(r.status), (r.reject_reason ?? r.void_reason) ? h('div', { className: 'muted' }, 'เหตุผล: ' + (r.reject_reason ?? r.void_reason)) : null)],
       ['', r => h('div', { className: 'row' },
         h('button', { className: 'link', onclick: () => openSlip(r.slip_path) }, 'ดูสลิป'),
         r.status === 'pending' ? h('button', { className: 'link', onclick: () => cancel(r) }, 'ยกเลิก') : null)],
-    ], rows));
+    ], rows),
+    refunds.length ? [h('h2', { style: 'margin-top:24px' }, 'เงินที่ได้รับคืน'), table([
+      ['วันที่', r => when(r.created_at)],
+      ['คืนค่า', r => r.member_charges?.charges?.title ?? 'เครดิตจ่ายเกิน'],
+      ['จำนวน', r => money(r.amount_satang)],
+      ['เหตุผล', r => r.reason],
+    ], refunds)] : null);
 }
 
 // ตรวจสลิป (เหรัญญิก)
@@ -534,6 +552,14 @@ async function renderReviewDetail(id) {
       } }, 'ไม่ผ่าน')),
     actions);
 
+  // ยืนยันผิด (เช่น เงินไม่เข้าจริง) → ยกเลิกรายรับ ยอดค้างกลับมาเหมือนเดิม รายรับเดิมยังอยู่ในประวัติ
+  const voidBtn = s.status === 'confirmed' && can('treasurer') ? h('div', { style: 'margin-top:16px' },
+    h('button', { className: 'danger', onclick: async () => {
+      const v = await dialogForm('ยกเลิกรายรับนี้', [{ name: 'reason', label: 'เหตุผล (สมาชิกจะเห็น) เช่น เงินไม่เข้าบัญชีจริง' }], 'ยกเลิกรายรับ', true);
+      if (v) act(() => sb.rpc('void_payment', { p_id: id, p_reason: v.reason }).then(must), 'ยกเลิกรายรับแล้ว ยอดค้างของสมาชิกกลับมาเหมือนเดิม');
+    } }, 'ยกเลิกรายรับนี้ (ยืนยันผิด)'),
+    h('p', { className: 'muted' }, 'ใช้เมื่อยืนยันผิด เช่น เงินไม่เข้าจริง ถ้าต้องการคืนเงินที่ได้รับจริง ให้ใช้เมนูคืนเงิน')) : null;
+
   return h('div', {},
     h('p', {}, h('a', { href: '#review' }, '← กลับไปรายการ')),
     h('div', { className: 'split' },
@@ -558,8 +584,9 @@ async function renderReviewDetail(id) {
           h('dt', {}, 'เป็นเครดิต'), h('dd', {}, money(Number(s.amount_satang) - allocated)),
           h('dt', {}, 'ส่งเมื่อ'), h('dd', {}, when(s.created_at)),
           s.reviewed_at ? [h('dt', {}, 'ผู้ตรวจ'), h('dd', {}, `${reviewer} · ${when(s.reviewed_at)}`)] : null,
-          s.reject_reason ? [h('dt', {}, 'เหตุผล'), h('dd', {}, s.reject_reason)] : null),
-        review)));
+          s.reject_reason ? [h('dt', {}, 'เหตุผล'), h('dd', {}, s.reject_reason)] : null,
+          s.voided_at ? [h('dt', {}, 'ยกเลิกเมื่อ'), h('dd', {}, when(s.voided_at)), h('dt', {}, 'เหตุผลที่ยกเลิก'), h('dd', {}, s.void_reason)] : null),
+        review, voidBtn)));
 }
 
 // รายการเรียกเก็บ: สร้าง (ประธาน/แอดมิน) และดูยอดค้างรายคน
@@ -629,6 +656,9 @@ async function renderChargeDetail(id) {
       ['รหัสนิสิต', r => r.student_id], ['ชื่อ', r => r.full_name],
       ['ยอด', r => money(r.amount_satang)], ['ชำระแล้ว', r => money(r.paid_satang)], ['คงค้าง', r => money(r.outstanding_satang)],
       ['สถานะ', r => Number(r.outstanding_satang) === 0 ? h('span', { className: 'chip ok' }, 'ชำระครบ') : h('span', { className: 'chip wait' }, 'ค้างชำระ')],
+      ...(can('treasurer') ? [['', r => Number(r.paid_satang) > 0
+        ? h('button', { className: 'link', onclick: () => refundDialog(r.member_id, r.full_name, r.paid_satang, r.member_charge_id, c.title) }, 'คืนเงิน')
+        : null]] : []),
     ], shown) : h('p', { className: 'muted' }, 'ไม่พบรายการ'));
   }
   const filter = h('select', { style: 'width:auto', 'aria-label': 'กรอง', onchange: e => { chargeFilter = e.target.value; draw(); } },
@@ -875,7 +905,7 @@ async function renderSummary() {
       stat('เงินคงเหลือ', money(f.balance_satang),
         f.approved_unpaid_satang > 0 ? ['อนุมัติแล้วรอจ่าย ', money(f.approved_unpaid_satang)] : (f.opening_satang ? ['รวมยอดยกมา ', money(f.opening_satang)] : 'ยังไม่ได้ตั้งยอดยกมา')),
       stat('รายรับที่ยืนยันแล้ว', money(f.income_satang)),
-      stat('รายจ่ายที่จ่ายแล้ว', money(f.expense_satang)),
+      stat('รายจ่ายที่จ่ายแล้ว', money(f.expense_satang), Number(f.refund_satang) ? ['คืนเงินสมาชิกอีก ', money(f.refund_satang)] : null),
       stat('รอดำเนินการ', `${f.pending_slips + f.pending_expenses} รายการ`,
         `สลิปรอตรวจ ${f.pending_slips} · คำขอเบิกรออนุมัติ ${f.pending_expenses}`)),
     h('div', { className: 'split' },
@@ -1129,8 +1159,8 @@ async function renderReports() {
       return [['รายการ', 'ครบกำหนด', 'ยอดต่อคน (บาท)', 'จำนวนคน', 'ชำระครบ (คน)', 'เก็บได้ (บาท)', 'ยังค้าง (บาท)'],
         ...rows.map(c => [c.title, c.due_date ?? '', Number(c.amount_satang) / 100, c.members, c.paid_members, Number(c.collected_satang) / 100, Number(c.outstanding_satang) / 100])];
     } },
-    income: { label: 'รายรับรายรายการ', note: 'เฉพาะเหรัญญิก ประธาน ผู้ตรวจสอบ · มีชื่อผู้ชำระ', allowed: staff, load: async () => {
-      const rows = await sb.from('ledger_entries').select('*').in('kind', ['income', 'opening_balance']).is('voided_at', null)
+    income: { label: 'รายรับและเงินคืนรายรายการ', note: 'เฉพาะเหรัญญิก ประธาน ผู้ตรวจสอบ · มีชื่อผู้ชำระ', allowed: staff, load: async () => {
+      const rows = await sb.from('ledger_entries').select('*').in('kind', ['income', 'opening_balance', 'refund']).is('voided_at', null)
         .gte('created_at', start()).lte('created_at', end()).order('created_at').then(must);
       return [['วันที่', 'เลขที่', 'รายละเอียด', 'จำนวน (บาท)'],
         ...rows.map(l => [when(l.created_at), 'TRX-' + String(l.id).padStart(6, '0'), l.description, Number(l.amount_satang) / 100])];
@@ -1212,6 +1242,56 @@ async function renderAudit() {
       ['รายละเอียด', l => h('span', { style: 'word-break:break-word' }, auditDetail(l) || '-')],
       ['เหตุผล', l => l.reason ?? '-'],
     ], rows) : h('p', { className: 'muted' }, 'ยังไม่มีประวัติ'));
+}
+
+// ─── คืนเงิน ─────────────────────────────────────────────────────
+
+// โอนเงินคืนก่อน แล้วบันทึกพร้อมสลิปโอนคืน memberChargeId = null คือคืนเครดิตจ่ายเกิน
+async function refundDialog(memberId, name, max, memberChargeId = null, what = 'เครดิตจ่ายเกิน') {
+  const v = await dialogForm(`คืนเงินให้ ${name} (${what})`, [
+    { name: 'amount', label: `ยอดที่โอนคืน (บาท · ไม่เกิน ${baht(max)})`, value: baht(max).replace(/,/g, '') },
+    { name: 'reason', label: memberChargeId ? 'เหตุผล เช่น กิจกรรมยกเลิก' : 'เหตุผล เช่น คืนเงินที่โอนเกิน' },
+    { name: 'slip', label: 'สลิปโอนคืน (รูป JPG, PNG, WEBP)', type: 'file', accept: Object.keys(SLIP_TYPES).join(',') },
+  ], 'บันทึกการคืนเงิน', true);
+  if (!v) return;
+  try {
+    const amount = toSatang(v.amount);
+    if (!amount) throw new Error('กรอกยอดเป็นตัวเลข');
+    if (!confirm(`ยืนยันว่าโอนคืน ${baht(amount)} บาท ให้ ${name} แล้ว?`)) return;
+    const path = await uploadSlip(v.slip);
+    must(await sb.rpc('refund_member', { p_member_id: memberId, p_amount_satang: amount, p_reason: v.reason, p_slip_path: path, p_member_charge_id: memberChargeId }));
+    toast('บันทึกการคืนเงินแล้ว และแจ้งสมาชิกแล้ว');
+    route();
+  } catch (err) { toast(thai(err)); }
+}
+
+// เหรัญญิก/ผู้ตรวจสอบ: สมาชิกที่มีเครดิตจ่ายเกิน และประวัติการคืนเงินทั้งหมด
+async function renderRefunds() {
+  const [credits, people, history] = await Promise.all([
+    sb.from('member_credit').select('*').gt('credit_satang', 0).then(must),
+    sb.from('members').select('id, full_name, student_id').then(must),
+    sb.from('refunds').select('*, members(full_name, student_id), member_charges(charges(title))').order('created_at', { ascending: false }).then(must),
+  ]);
+  const who = new Map(people.map(m => [m.id, m]));
+  return h('div', {},
+    h('h1', {}, 'คืนเงิน'),
+    h('p', { className: 'muted' }, 'โอนเงินคืนสมาชิกก่อน แล้วบันทึกพร้อมสลิปโอนคืน · คืนค่ารายการที่ชำระแล้ว (เช่น กิจกรรมยกเลิก) ทำได้ที่หน้ารายการเรียกเก็บ · ยืนยันสลิปผิดให้ใช้ปุ่ม "ยกเลิกรายรับ" ในหน้าตรวจสลิป'),
+    h('div', { className: 'card' }, h('h2', {}, 'สมาชิกที่มีเครดิตจ่ายเกิน'),
+      credits.length ? table([
+        ['รหัสนิสิต', c => who.get(c.member_id)?.student_id ?? '-'],
+        ['ชื่อ', c => who.get(c.member_id)?.full_name ?? '-'],
+        ['เครดิต', c => money(c.credit_satang)],
+        ...(can('treasurer') ? [['', c => h('button', { className: 'link', onclick: () => refundDialog(c.member_id, who.get(c.member_id)?.full_name, c.credit_satang) }, 'คืนเครดิต')]] : []),
+      ], credits) : h('p', { className: 'muted' }, 'ไม่มีสมาชิกที่มีเครดิตคงเหลือ')),
+    h('div', { className: 'card' }, h('h2', {}, 'ประวัติการคืนเงิน'),
+      history.length ? table([
+        ['วันที่', r => when(r.created_at)],
+        ['สมาชิก', r => `${r.members.full_name} (${r.members.student_id})`],
+        ['คืนค่า', r => r.member_charges?.charges?.title ?? 'เครดิตจ่ายเกิน'],
+        ['จำนวน', r => money(r.amount_satang)],
+        ['เหตุผล', r => r.reason],
+        ['สลิป', r => h('button', { className: 'link', onclick: () => openSlip(r.slip_path) }, 'เปิดดู')],
+      ], history) : h('p', { className: 'muted' }, 'ยังไม่มีการคืนเงิน')));
 }
 
 // ─── กระดิ่งแจ้งเตือน ─────────────────────────────────────────────
