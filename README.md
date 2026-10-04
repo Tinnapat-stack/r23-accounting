@@ -12,6 +12,7 @@
 | `supabase/migrations/0003_member_admin.sql` | ระงับ/เปิดบัญชีพร้อมเหตุผล และนำเข้ารายชื่อทีละหลายคน |
 | `supabase/migrations/0004_expenses.sql` | ระยะ 4: เบิกจ่าย งบกิจกรรม ยอดยกมา สรุปการเงินสำหรับทุกคน |
 | `supabase/migrations/0005_refunds.sql` | ยกเลิกรายรับที่ยืนยันผิด และคืนเงินสมาชิก |
+| `supabase/migrations/0006_corrections_reminders.sql` | ยกเลิกการจ่ายที่บันทึกผิด และเตือนยอดค้าง (อัตโนมัติทุกวัน + กดเอง) |
 | `supabase/seed-test.sql` | ข้อมูลทดสอบ (เฉพาะโปรเจ็กต์ทดสอบ) |
 | `web/index.html` | หน้าตาเว็บและหน้าเข้าสู่ระบบ/สมัคร/ลืมรหัสผ่าน |
 | `web/app.js` | ทุกหน้าหลังเข้าสู่ระบบ: หน้าหลัก สรุปการเงิน แจ้งชำระ เบิกจ่าย ตรวจสลิป รายการเรียกเก็บ งบประมาณ รายงาน สมาชิก ประวัติการกระทำ |
@@ -23,7 +24,7 @@
 ## ติดตั้งครั้งแรก
 
 1. สร้างโปรเจ็กต์ที่ [supabase.com](https://supabase.com) (แพ็กเกจฟรีพอ) เลือก region สิงคโปร์
-2. ไปที่ **SQL Editor** วางเนื้อหาไฟล์ใน `supabase/migrations/` ทีละไฟล์ตามลำดับเลข (0001 → 0002 → 0003 → 0004 → 0005) แล้วกด Run
+2. ไปที่ **SQL Editor** วางเนื้อหาไฟล์ใน `supabase/migrations/` ทีละไฟล์ตามลำดับเลข (0001 → 0002 → … → 0006) แล้วกด Run
 3. ไปที่ **Authentication → Sign In / Providers → Email**: เปิด Email และเปิด **Confirm email**
 4. ไปที่ **Authentication → URL Configuration**: ตั้ง Site URL และ Redirect URLs เป็นที่อยู่เว็บ
    (ตอนทดสอบในเครื่องใช้ `http://localhost:5173`)

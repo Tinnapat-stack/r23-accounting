@@ -609,6 +609,7 @@ async function renderCharges(id) {
       h('div', {}, h('label', { htmlFor: 'c-title' }, 'ชื่อรายการ'), h('input', { id: 'c-title', name: 'title', required: true, placeholder: 'เช่น ค่ากิจกรรมรุ่น 2569' })),
       h('div', {}, h('label', { htmlFor: 'c-amt' }, 'ยอดต่อคน (บาท)'), h('input', { id: 'c-amt', name: 'amount', inputMode: 'decimal', required: true })),
       h('div', {}, h('label', { htmlFor: 'c-due' }, 'ครบกำหนด'), h('input', { id: 'c-due', name: 'due', type: 'date' }))),
+    h('p', { className: 'muted', style: 'margin:6px 0 0' }, 'ถ้าใส่วันครบกำหนด ระบบจะเตือนคนที่ยังค้างอัตโนมัติ 3 วันก่อนครบกำหนด และสัปดาห์ละครั้งหลังเลยกำหนด'),
     h('label', { htmlFor: 'c-desc' }, 'รายละเอียด (ไม่บังคับ)'), h('input', { id: 'c-desc', name: 'description' }),
     h('label', { htmlFor: 'c-who' }, 'เรียกเก็บใคร'),
     h('textarea', { id: 'c-who', name: 'who', rows: 2, placeholder: 'เว้นว่าง = สมาชิกทุกคน หรือใส่รหัสนิสิตคั่นด้วยเว้นวรรค/จุลภาค' }),
@@ -669,11 +670,20 @@ async function renderChargeDetail(id) {
     try { must(await sb.from('charges').update({ status: next }).eq('id', id)); route(); } catch (err) { toast(thai(err)); }
   } }, c.status === 'open' ? 'ปิดรับชำระ' : 'เปิดรับชำระอีกครั้ง') : null;
   const owed = rows.reduce((s, r) => s + Number(r.outstanding_satang), 0);
+  const remind = can('treasurer', 'president') && c.status === 'open' && owed > 0 ? h('button', { className: 'ghost', onclick: async e => {
+    if (!confirm('ส่งแจ้งเตือนในเว็บถึงทุกคนที่ยังค้างรายการนี้? (ส่งถึงคนเดิมได้วันละครั้ง)')) return;
+    e.target.disabled = true;
+    try {
+      const n = must(await sb.rpc('remind_charge', { p_charge_id: id }));
+      toast(n ? `ส่งเตือนแล้ว ${n} คน` : 'วันนี้เตือนครบทุกคนแล้ว (หรือคนที่ค้างยังไม่ได้สมัครใช้งาน)');
+    } catch (err) { toast(thai(err)); }
+    e.target.disabled = false;
+  } }, 'ส่งเตือนคนที่ยังค้าง') : null;
   draw();
   return h('div', {},
     h('p', {}, h('a', { href: '#charges' }, '← กลับไปรายการ')),
     h('div', { className: 'card' },
-      h('div', { className: 'row' }, h('h1', {}, c.title), h('div', { style: 'margin-left:auto' }, toggle)),
+      h('div', { className: 'row' }, h('h1', {}, c.title), h('div', { className: 'row', style: 'margin-left:auto' }, remind, toggle)),
       h('p', { className: 'muted' }, `${baht(c.amount_satang)} บาท/คน · ครบกำหนด ${day(c.due_date)}`, c.description ? ' · ' + c.description : ''),
       h('p', {}, `ชำระครบ ${rows.filter(r => Number(r.outstanding_satang) === 0).length}/${rows.length} คน · ยอดค้างรวม `, money(owed)),
       h('div', { className: 'grid', style: 'margin-bottom:8px' }, search, filter),
@@ -1049,7 +1059,10 @@ async function renderExpenseDetail(id) {
       } }, 'อนุมัติ'),
       h('button', { className: 'danger', onclick: () => withReason('ไม่อนุมัติคำขอเบิก', 'เหตุผล (ผู้ขอจะเห็น)', 'ไม่อนุมัติ', 'reject_expense', 'บันทึกว่าไม่อนุมัติแล้ว') }, 'ไม่อนุมัติ'),
     ] : null,
-    canCancel ? h('button', { className: 'ghost', onclick: () => withReason('ยกเลิกคำขอเบิก', 'เหตุผลที่ยกเลิก', 'ยกเลิกคำขอ', 'cancel_expense', 'ยกเลิกแล้ว') }, 'ยกเลิกคำขอ') : null);
+    canCancel ? h('button', { className: 'ghost', onclick: () => withReason('ยกเลิกคำขอเบิก', 'เหตุผลที่ยกเลิก', 'ยกเลิกคำขอ', 'cancel_expense', 'ยกเลิกแล้ว') }, 'ยกเลิกคำขอ') : null,
+    // บันทึกจ่ายผิด (ยอดหรือใบเสร็จผิด) → กลับเป็นรอจ่าย แล้วบันทึกใหม่
+    t && e.status === 'paid' ? h('button', { className: 'danger', onclick: () => withReason('ยกเลิกการจ่าย (บันทึกผิด)',
+      'เหตุผล เช่น พิมพ์ยอดผิด แนบใบเสร็จผิด', 'ยกเลิกการจ่าย', 'void_expense_payment', 'ยกเลิกการจ่ายแล้ว บันทึกจ่ายใหม่ได้เลย') }, 'ยกเลิกการจ่าย (บันทึกผิด)') : null);
 
   return h('div', {},
     h('p', {}, h('a', { href: '#expenses' }, '← กลับไปรายการ')),
@@ -1058,6 +1071,7 @@ async function renderExpenseDetail(id) {
       h('p', { style: 'font-size:1.4rem; margin:4px 0 16px' }, money(e.paid_satang ?? e.amount_satang),
         e.paid_satang && e.paid_satang !== e.amount_satang ? h('small', { className: 'muted' }, ` (ขอเบิก ${baht(e.amount_satang)} บาท)`) : null),
       budgetWarn,
+      e.payment_void_note ? h('div', { className: 'warn' }, '⚠ ', e.payment_void_note) : null,
       h('dl', {},
         h('dt', {}, 'ผู้ขอ'), h('dd', {}, e.requester_name),
         h('dt', {}, 'กิจกรรม'), h('dd', {}, e.activity_name ?? 'ไม่ระบุ (ค่าใช้จ่ายทั่วไป)'),
