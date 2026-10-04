@@ -272,12 +272,13 @@ async function renderHome() {
     return h('div', {}, hello, empty('บัญชีนี้ถูกระงับหรือยังไม่ได้ผูกกับรายชื่อสมาชิก กรุณาติดต่อแอดมิน'));
   }
 
-  const [rows, credit, mine, toReview, [fund], toApprove, toPay] = await Promise.all([
+  // ยอดเงินกองกลางเป็นข้อมูลเสริม ถ้าดึงไม่ได้หน้าหลักยังต้องใช้งานได้
+  const [rows, credit, mine, toReview, fund, toApprove, toPay] = await Promise.all([
     sb.from('charge_balances').select('*').eq('member_id', member.id).order('due_date', { nullsFirst: false }).then(must),
     sb.from('member_credit').select('credit_satang').eq('member_id', member.id).maybeSingle().then(must),
     sb.from('payment_submissions').select('id', { count: 'exact', head: true }).eq('member_id', member.id).eq('status', 'pending'),
     can('treasurer') ? pendingCount() : 0,
-    sb.rpc('fund_summary').then(must),
+    sb.rpc('fund_summary').then(r => r.data?.[0] ?? null),
     can('treasurer') ? expenseCount('pending') : 0,
     can('treasurer') ? expenseCount('approved') : 0,
   ]);
@@ -292,8 +293,8 @@ async function renderHome() {
       creditLeft ? h('li', {}, 'เครดิตจากการจ่ายเกินคงเหลือ ', money(creditLeft)) : null,
       toApprove ? h('li', {}, `คำขอเบิกรออนุมัติ ${toApprove} รายการ `, h('a', { href: '#expenses' }, 'ดู →')) : null,
       toPay ? h('li', {}, `อนุมัติแล้วรอจ่าย ${toPay} รายการ `, h('a', { href: '#expenses' }, 'ดู →')) : null),
-    h('p', { className: 'muted', style: 'margin-bottom:0' }, 'เงินกองกลางของรุ่นคงเหลือ ', money(fund.balance_satang), ' ',
-      h('a', { href: '#summary' }, 'ดูสรุปการเงิน →')));
+    fund ? h('p', { className: 'muted', style: 'margin-bottom:0' }, 'เงินกองกลางของรุ่นคงเหลือ ', money(fund.balance_satang), ' ',
+      h('a', { href: '#summary' }, 'ดูสรุปการเงิน →')) : null);
 
   const useCredit = async r => {
     if (!confirm(`ใช้เครดิตตัดยอด "${r.title}"?`)) return;
@@ -1350,7 +1351,7 @@ async function route() {
     if (run !== seq) return;
     show('app');
     page.replaceChildren(h('div', { className: 'card' },
-      h('h2', {}, 'ไม่สามารถโหลดข้อมูลได้'), h('p', { className: 'muted' }, thai(err) + ' กรุณาลองใหม่อีกครั้ง'),
+      h('h2', {}, 'ไม่สามารถโหลดข้อมูลได้'), h('p', { className: 'muted' }, thai(err)),
       h('button', { onclick: () => { me = null; route(); } }, 'ลองใหม่')));
   }
 }
