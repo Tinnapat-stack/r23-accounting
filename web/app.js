@@ -101,6 +101,34 @@ function table(cols, rows, onRow) {
 const empty = (text, action) => h('div', { className: 'card' }, h('p', { className: 'muted' }, text), action);
 const msgBox = () => h('div', { className: 'msg', role: 'status', hidden: true });
 
+// หน้าต่างฟอร์มเล็ก ๆ (ใช้ <dialog> ของเบราว์เซอร์) คืนค่าที่กรอก หรือ null ถ้ากดยกเลิก
+function dialogForm(title, fields, okLabel, danger = false) {
+  return new Promise(resolve => {
+    const done = value => { dlg.remove(); resolve(value); };
+    const form = h('form', { onsubmit: e => { e.preventDefault(); done(Object.fromEntries(new FormData(form))); } },
+      h('h2', {}, title),
+      fields.map(f => [
+        h('label', { htmlFor: 'd-' + f.name }, f.label),
+        h('input', { id: 'd-' + f.name, name: f.name, value: f.value ?? '', type: f.type ?? 'text', required: f.required !== false }),
+      ]),
+      h('div', { className: 'row', style: 'margin-top:16px; justify-content:flex-end' },
+        h('button', { type: 'button', className: 'ghost', onclick: () => done(null) }, 'ยกเลิก'),
+        h('button', { type: 'submit', className: danger ? 'danger' : null }, okLabel)));
+    const dlg = h('dialog', { oncancel: () => done(null) }, form); // กด Esc
+    document.body.append(dlg);
+    dlg.showModal();
+  });
+}
+
+// ตารางที่คัดลอกจาก Excel / Google Sheets (คั่นด้วย Tab) หรือ CSV → [{student_id, full_name, email}]
+// ข้ามแถวหัวตารางที่มีคำว่า "รหัส" หรือ "student"
+function parseMemberRows(text) {
+  return text.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+    .map(l => l.split(l.includes('\t') ? '\t' : ',').map(c => c.trim().replace(/^"|"$/g, '')))
+    .filter(([first]) => !/รหัส|student/i.test(first))
+    .map(([student_id = '', full_name = '', email = '']) => ({ student_id, full_name, email }));
+}
+
 async function openSlip(path) {
   const { data, error } = await sb.storage.from('slips').createSignedUrl(path, 600);
   if (error) return toast(thai(error));
@@ -557,6 +585,55 @@ async function renderMembers() {
       route();
     });
 
+  const importResult = h('div');
+  const importForm = onSubmit(h('form', {},
+    h('label', { htmlFor: 'im-rows' }, 'นำเข้าหลายคน: คัดลอก 3 คอลัมน์ (รหัสนิสิต, ชื่อ-นามสกุล, อีเมล) จาก Excel หรือ Google Sheets มาวาง'),
+    h('textarea', { id: 'im-rows', name: 'rows', rows: 5, required: true,
+                    placeholder: '65010001\tสมชาย ใจดี\tsomchai@gmail.com\n65010002\tสมหญิง รักเรียน\tsomying@gmail.com' }),
+    h('div', { className: 'row', style: 'margin-top:8px' }, h('button', { type: 'submit' }, 'นำเข้า')),
+    msgBox()), async f => {
+      const rows = parseMemberRows(f.rows);
+      if (!rows.length) throw new Error('ไม่พบรายชื่อ ตรวจว่าวางข้อมูลครบ 3 คอลัมน์');
+      if (!confirm(`นำเข้า ${rows.length} คน?`)) return;
+      const res = must(await sb.rpc('import_members', { p_rows: rows }));
+      const added = res.filter(r => r.result === 'เพิ่มแล้ว').length;
+      const failed = res.filter(r => r.result !== 'เพิ่มแล้ว');
+      importResult.replaceChildren(failed.length
+        ? h('div', { className: 'warn' }, h('b', {}, `ไม่ได้เพิ่ม ${failed.length} แถว (แก้แล้ววางเฉพาะแถวเหล่านี้ใหม่ได้)`),
+            table([['รหัสนิสิต', r => r.student_id ?? '-'], ['ชื่อ', r => r.full_name ?? '-'], ['อีเมล', r => r.email ?? '-'], ['เหตุผล', r => r.result]], failed))
+        : '');
+      if (added) {
+        $('#page').replaceChildren(await renderMembers()); // โหลดตารางใหม่ แต่คงผลนำเข้าไว้ให้เห็น
+        toast(`เพิ่มสมาชิกแล้ว ${added} คน`);
+      }
+      $('#im-result').replaceChildren(importResult);
+      return failed.length ? '' : `เพิ่มครบ ${added} คน`;
+    });
+
+  const edit = async m => {
+    const v = await dialogForm('แก้ไขข้อมูลสมาชิก', [
+      { name: 'student_id', label: 'รหัสนิสิต', value: m.student_id },
+      { name: 'full_name', label: 'ชื่อ-นามสกุล', value: m.full_name },
+      { name: 'email', label: m.user_id ? 'อีเมล (สมัครแล้ว แก้ตรงนี้ไม่เปลี่ยนอีเมลที่ใช้ล็อกอิน)' : 'อีเมล (ต้องตรงกับที่จะใช้สมัคร)', value: m.email, type: 'email' },
+    ], 'บันทึก');
+    if (!v) return;
+    try {
+      must(await sb.from('members').update({ student_id: v.student_id.trim(), full_name: v.full_name.trim(), email: v.email.trim().toLowerCase() }).eq('id', m.id));
+      toast('บันทึกแล้ว'); route();
+    } catch (err) { toast(thai(err)); }
+  };
+
+  const setActive = async m => {
+    const v = await dialogForm(m.active ? `ระงับบัญชี ${m.full_name}` : `เปิดใช้บัญชี ${m.full_name}`,
+      [{ name: 'reason', label: m.active ? 'เหตุผลที่ระงับ (จะถูกบันทึกในประวัติ)' : 'เหตุผลที่เปิดใช้อีกครั้ง' }],
+      m.active ? 'ระงับบัญชี' : 'เปิดใช้บัญชี', m.active);
+    if (!v) return;
+    try {
+      must(await sb.rpc('set_member_active', { p_member_id: m.id, p_active: !m.active, p_reason: v.reason }));
+      toast(m.active ? 'ระงับบัญชีแล้ว สิทธิ์ทั้งหมดหยุดใช้ทันที' : 'เปิดใช้บัญชีแล้ว'); route();
+    } catch (err) { toast(thai(err)); }
+  };
+
   const addAccount = onSubmit(h('form', { className: 'grid' },
     h('div', {}, h('label', { htmlFor: 'ba-bank' }, 'ธนาคาร'), h('input', { id: 'ba-bank', name: 'bank_name', required: true })),
     h('div', {}, h('label', { htmlFor: 'ba-name' }, 'ชื่อบัญชี'), h('input', { id: 'ba-name', name: 'account_name', required: true })),
@@ -574,15 +651,24 @@ async function renderMembers() {
   };
 
   return h('div', {},
-    h('div', { className: 'card' }, h('h2', {}, 'สมาชิกและสิทธิ์'), addMember,
+    h('div', { className: 'card' }, h('h2', {}, 'เพิ่มสมาชิก'), addMember,
+      h('hr', { style: 'border:0; border-top:1px solid var(--line); margin:20px 0 8px' }),
+      importForm, h('div', { id: 'im-result' })),
+    h('div', { className: 'card' }, h('h2', {}, `สมาชิกและสิทธิ์ (${members.length} คน)`),
       table([
         ['รหัสนิสิต', m => m.student_id],
         ['ชื่อ', m => h('div', {}, m.full_name, h('div', { className: 'muted' }, m.email))],
         ['สถานะ', m => h('span', { className: 'chip ' + (!m.active ? 'bad' : m.user_id ? 'ok' : 'wait') },
           !m.active ? 'ระงับ' : m.user_id ? 'สมัครแล้ว' : 'ยังไม่สมัคร')],
         ['บทบาทเพิ่มเติม', roleBoxes],
+        ['จัดการ', m => h('div', { className: 'row' },
+          h('button', { className: 'link', onclick: () => edit(m) }, 'แก้ไข'),
+          m.user_id === me.id ? null
+            : h('button', { className: 'link', style: m.active ? 'color:var(--red)' : null, onclick: () => setActive(m) },
+                m.active ? 'ระงับ' : 'เปิดใช้')),
+        ],
       ], members),
-      h('p', { className: 'muted' }, 'ให้บทบาทตัวเองไม่ได้ ทุกการเปลี่ยนสิทธิ์ถูกบันทึกในประวัติการกระทำ')),
+      h('p', { className: 'muted' }, 'ให้บทบาทหรือระงับบัญชีตัวเองไม่ได้ ทุกการเปลี่ยนแปลงถูกบันทึกในประวัติการกระทำ')),
     h('div', { className: 'card' }, h('h2', {}, 'บัญชีรับเงิน'), addAccount,
       accounts.length ? table([
         ['ธนาคาร', a => a.bank_name], ['ชื่อบัญชี', a => a.account_name], ['เลขบัญชี', a => a.account_no],
@@ -695,7 +781,7 @@ function show(view) {
   $('#user-bar').hidden = $('#whoami').hidden = view !== 'app';
 }
 
-let recovering = false, seq = 0;
+let recovering = false, seq = 0, profileReady = null;
 
 async function route() {
   if (recovering) return show('reset');
@@ -709,11 +795,13 @@ async function route() {
   const run = ++seq;
   const page = $('#page');
   try {
+    // ตอนเปิดเว็บ Supabase ส่ง event เข้าสู่ระบบมาติดกันหลายครั้ง ทุกรอบต้องรอโหลดโปรไฟล์ชุดเดียวกัน
     if (me?.id !== session.user.id) {
       me = session.user;
-      await loadProfile();
+      profileReady = loadProfile();
       startLive();
     }
+    await profileReady;
     show('app');
     renderTabs();
     const [name, param] = location.hash.slice(1).split('/');

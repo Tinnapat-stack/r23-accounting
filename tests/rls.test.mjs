@@ -88,7 +88,7 @@ assert.equal((await as('treasurer', `select * from storage.objects`)).length, 2)
 assert.equal((await as('admin', `select * from storage.objects`)).length, 0);
 
 // ── ระงับบัญชีแล้วสิทธิ์หายทันที
-await as('admin', `update members set active = false where user_id = $1`, [ids.treasurer]);
+await as('admin', `select set_member_active(id, false, 'ทดสอบ') from members where user_id = $1`, [ids.treasurer]);
 assert.equal((await as('treasurer', `select * from ledger_entries`)).length, 0);
 
 console.log('ผ่านทุกข้อ ✓');
