@@ -1,5 +1,6 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
+import { readSlipQr, BANKS } from './slipqr.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const $ = (s, root = document) => root.querySelector(s);
@@ -387,6 +388,21 @@ async function renderPay() {
       (used > total ? ' · ⚠ ยอดที่เลือกเกินยอดโอน' : '');
   }
 
+  // อ่าน QR บนสลิปทันทีที่เลือกไฟล์ ได้เลขอ้างอิงไว้กันสลิปซ้ำ และเติมธนาคาร/เลขอ้างอิงให้
+  const qrNote = h('p', { className: 'muted', hidden: true });
+  let qr = Promise.resolve(null);
+  function readQr(e) {
+    const file = e.target.files[0];
+    qrNote.hidden = !file; qrNote.textContent = 'กำลังอ่าน QR บนสลิป…';
+    qr = file ? readSlipQr(file).then(r => {
+      qrNote.textContent = r ? `อ่าน QR บนสลิปได้ ✓ ธนาคาร${BANKS[r.bank] ?? ' ' + r.bank} เลขอ้างอิง ${r.ref}`
+        : 'อ่าน QR บนสลิปไม่ได้ ส่งต่อได้ แต่ใช้รูปสลิปเต็มใบจากแอปธนาคารจะตรวจได้เร็วกว่า';
+      if (r && !form.payer_bank.value) form.payer_bank.value = BANKS[r.bank] ?? '';
+      if (r && !form.reference_no.value) form.reference_no.value = r.ref;
+      return r;
+    }) : Promise.resolve(null);
+  }
+
   const form = h('form', { className: 'card' },
     h('h1', {}, 'แจ้งชำระเงิน'),
     accounts.length
@@ -400,7 +416,8 @@ async function renderPay() {
       h('div', {}, h('label', { htmlFor: 'p-at' }, 'วันเวลาที่โอน'),
         h('input', { id: 'p-at', name: 'transferred_at', type: 'datetime-local', required: true, value: nowLocal, max: nowLocal }))),
     h('label', { htmlFor: 'p-slip' }, 'สลิป (รูป JPG, PNG หรือ WEBP ไม่เกิน 5 MB)'),
-    h('input', { id: 'p-slip', name: 'slip', type: 'file', accept: Object.keys(SLIP_TYPES).join(','), required: true }),
+    h('input', { id: 'p-slip', name: 'slip', type: 'file', accept: Object.keys(SLIP_TYPES).join(','), required: true, onchange: readQr }),
+    qrNote,
     h('div', { className: 'grid' },
       h('div', {}, h('label', { htmlFor: 'p-bank' }, 'ธนาคารที่โอน (ไม่บังคับ)'), h('input', { id: 'p-bank', name: 'payer_bank' })),
       h('div', {}, h('label', { htmlFor: 'p-ref' }, 'เลขอ้างอิงในสลิป (ไม่บังคับ)'), h('input', { id: 'p-ref', name: 'reference_no' }))),
@@ -427,6 +444,7 @@ async function renderPay() {
 
     const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer()))]
       .map(b => b.toString(16).padStart(2, '0')).join('');
+    const slipRef = (await qr)?.key ?? null;
     const path = await uploadSlip(file);
     must(await sb.rpc('submit_payment', {
       p_amount_satang: amount,
@@ -435,7 +453,7 @@ async function renderPay() {
       p_items: list.map(({ title, ...i }) => i),
       p_bank_account_id: f.account || null,
       p_payer_bank: f.payer_bank, p_reference_no: f.reference_no, p_note: f.note,
-      p_slip_sha256: hash,
+      p_slip_sha256: hash, p_slip_ref: slipRef,
     }));
     toast('ส่งข้อมูลแล้ว รอเหรัญญิกตรวจสอบ');
     location.hash = 'my-payments';
@@ -510,10 +528,15 @@ async function renderReviewDetail(id) {
     .select(`*, members(full_name, student_id), bank_accounts(bank_name, account_no, account_name),
              submission_allocations(amount_satang, member_charges(charges(title), members(full_name, student_id)))`)
     .eq('id', id).single().then(must);
-  const [url, sameFile, sameRef, reviewer] = await Promise.all([
-    sb.storage.from('slips').createSignedUrl(s.slip_path, 600).then(r => r.data?.signedUrl),
+  const url = await sb.storage.from('slips').createSignedUrl(s.slip_path, 600).then(r => r.data?.signedUrl);
+  // อ่าน QR จากรูปจริงอีกรอบ ไม่เชื่อค่าที่ส่งมาอย่างเดียว
+  const qr = url ? await fetch(url).then(r => r.blob()).then(readSlipQr).catch(() => null) : null;
+  const qrKey = qr?.key ?? s.slip_ref;
+  if (qr && !s.slip_ref && can('treasurer')) await sb.rpc('set_slip_ref', { p_id: id, p_slip_ref: qr.key }); // ซ้ำกับรายการที่ใช้อยู่ก็บันทึกไม่ได้ แต่คำเตือนด้านล่างแสดงอยู่แล้ว
+  const [sameFile, sameRef, sameQr, reviewer] = await Promise.all([
     s.slip_sha256 ? sb.from('payment_submissions').select('id, status, created_at').eq('slip_sha256', s.slip_sha256).neq('id', id).then(must) : [],
     s.reference_no ? sb.from('payment_submissions').select('id, status, created_at').eq('reference_no', s.reference_no).neq('id', id).then(must) : [],
+    qrKey ? sb.from('payment_submissions').select('id, status, created_at').eq('slip_ref', qrKey).neq('id', id).then(must) : [],
     s.reviewed_by ? sb.from('members').select('full_name').eq('user_id', s.reviewed_by).maybeSingle().then(r => r.data?.full_name ?? '-') : null,
   ]);
   const allocated = s.submission_allocations.reduce((t, a) => t + Number(a.amount_satang), 0);
@@ -563,15 +586,19 @@ async function renderReviewDetail(id) {
       h('div', { className: 'card' },
         h('h1', {}, money(s.amount_satang)),
         h('p', {}, chip(s.status)),
-        (sameFile.length || sameRef.length) ? h('div', { className: 'warn' },
+        (sameFile.length || sameRef.length || sameQr.length) ? h('div', { className: 'warn' },
+          sameQr.length ? h('div', {}, h('b', {}, 'QR บนสลิปนี้เคยถูกใช้ในรายการอื่น (สลิปเดียวกัน)'), dupLinks(sameQr)) : null,
           sameFile.length ? h('div', {}, h('b', {}, 'พบไฟล์สลิปเดียวกันในรายการอื่น'), dupLinks(sameFile)) : null,
           sameRef.length ? h('div', {}, h('b', {}, 'พบเลขอ้างอิงเดียวกันในรายการอื่น'), dupLinks(sameRef)) : null) : null,
+        url && !qr ? h('div', { className: 'warn' }, 'อ่าน QR บนสลิปไม่ได้ (อาจเป็นรูปถ่ายหรือครอปมา) ตรวจละเอียดเป็นพิเศษ') : null,
+        qr && s.slip_ref && qr.key !== s.slip_ref ? h('div', { className: 'warn' }, 'QR ในรูปไม่ตรงกับเลขที่ส่งมาตอนแจ้งชำระ') : null,
         h('dl', {},
           h('dt', {}, 'ผู้ส่ง'), h('dd', {}, `${s.members.full_name} (${s.members.student_id})`),
           h('dt', {}, 'เวลาโอน'), h('dd', {}, when(s.transferred_at)),
           h('dt', {}, 'บัญชีปลายทาง'), h('dd', {}, s.bank_accounts ? `${s.bank_accounts.bank_name} ${s.bank_accounts.account_no}` : '-'),
           h('dt', {}, 'ธนาคารผู้โอน'), h('dd', {}, s.payer_bank ?? '-'),
           h('dt', {}, 'เลขอ้างอิง'), h('dd', {}, s.reference_no ?? '-'),
+          h('dt', {}, 'QR บนสลิป'), h('dd', {}, qr ? `${BANKS[qr.bank] ?? qr.bank} · ${qr.ref}` : 'อ่านไม่ได้'),
           h('dt', {}, 'หมายเหตุ'), h('dd', {}, s.note ?? '-'),
           h('dt', {}, 'ตัดรายการ'), h('dd', {}, s.submission_allocations.length
             ? s.submission_allocations.map(a => h('div', {}, a.member_charges.charges.title, ' · ',

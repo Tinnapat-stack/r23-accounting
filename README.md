@@ -14,10 +14,12 @@
 | `supabase/migrations/0005_refunds.sql` | ยกเลิกรายรับที่ยืนยันผิด และคืนเงินสมาชิก |
 | `supabase/migrations/0006_corrections_reminders.sql` | ยกเลิกการจ่ายที่บันทึกผิด และเตือนยอดค้าง (อัตโนมัติทุกวัน + กดเอง) |
 | `supabase/migrations/0007_charge_admin.sql` | เพิ่มคนเข้ารายการเรียกเก็บทีหลัง และเตือนใหม่เมื่อเลื่อนวันครบกำหนด |
+| `supabase/migrations/0008_slip_qr.sql` | อ่าน QR บนสลิป กันสลิปเดียวกันถูกใช้ซ้ำ |
 | `supabase/seed-test.sql` | ข้อมูลทดสอบ (เฉพาะโปรเจ็กต์ทดสอบ) |
 | `web/index.html` | หน้าตาเว็บและหน้าเข้าสู่ระบบ/สมัคร/ลืมรหัสผ่าน |
 | `web/app.js` | ทุกหน้าหลังเข้าสู่ระบบ: หน้าหลัก สรุปการเงิน แจ้งชำระ เบิกจ่าย ตรวจสลิป รายการเรียกเก็บ งบประมาณ รายงาน สมาชิก ประวัติการกระทำ |
 | `web/config.js` | ที่อยู่โปรเจ็กต์ Supabase และ anon key |
+| `web/slipqr.js` | อ่าน QR บนสลิปธนาคาร (เลขอ้างอิงรายการ) ในเบราว์เซอร์ |
 | `web/manuals/member.md`, `web/manuals/staff.md` | คู่มือสมาชิก / คู่มือผู้ดูแล แสดงเป็นหน้าในเว็บ (เมนู "ช่วยเหลือ") แก้ไฟล์แล้ว push หน้าในเว็บอัปเดตตาม |
 | `scripts/storage-backup.mjs` | สำรอง/กู้คืนไฟล์สลิปและใบเสร็จ |
 | `tests/*.test.mjs` | ทดสอบสิทธิ์และกฎบัญชีบน Postgres จริง (ไม่ต้องต่อเน็ตหรือมี Supabase) |
@@ -25,7 +27,7 @@
 ## ติดตั้งครั้งแรก
 
 1. สร้างโปรเจ็กต์ที่ [supabase.com](https://supabase.com) (แพ็กเกจฟรีพอ) เลือก region สิงคโปร์
-2. ไปที่ **SQL Editor** วางเนื้อหาไฟล์ใน `supabase/migrations/` ทีละไฟล์ตามลำดับเลข (0001 → 0002 → … → 0007) แล้วกด Run
+2. ไปที่ **SQL Editor** วางเนื้อหาไฟล์ใน `supabase/migrations/` ทีละไฟล์ตามลำดับเลข (0001 → 0002 → … → 0008) แล้วกด Run
 3. ไปที่ **Authentication → Sign In / Providers → Email**: เปิด Email และเปิด **Confirm email**
 4. ไปที่ **Authentication → URL Configuration**: ตั้ง Site URL และ Redirect URLs เป็นที่อยู่เว็บ
    (ตอนทดสอบในเครื่องใช้ `http://localhost:5173`)
