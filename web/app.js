@@ -356,7 +356,7 @@ async function renderPay() {
     const cb = h('input', { type: 'checkbox', checked: mine.length === 1, 'aria-label': r.title });
     const amt = h('input', { type: 'text', inputMode: 'decimal', value: baht(r.outstanding_satang).replace(/,/g, ''),
                              'aria-label': 'ยอดที่ชำระ ' + r.title });
-    cb.onchange = amt.oninput = update;
+    cb.onchange = recalc; amt.oninput = update;
     return { r, cb, amt, el: h('div', { className: 'pick' }, cb,
       h('span', {}, r.title, h('small', { className: 'muted' }, ' ค้าง ', money(r.outstanding_satang))), amt) };
   });
@@ -365,19 +365,33 @@ async function renderPay() {
     const row = h('div', { className: 'other' },
       h('input', { name: 'o_sid', placeholder: 'รหัสนิสิตเพื่อน', 'aria-label': 'รหัสนิสิตเพื่อน' }),
       h('select', { name: 'o_charge', 'aria-label': 'รายการ' }, open.map(c => h('option', { value: c.id }, c.title))),
-      h('input', { name: 'o_amt', inputMode: 'decimal', placeholder: 'บาท', 'aria-label': 'ยอดที่จ่ายแทน', oninput: update }),
-      h('button', { type: 'button', className: 'ghost', onclick: () => { row.remove(); update(); } }, 'ลบ'));
+      h('input', { name: 'o_amt', inputMode: 'decimal', placeholder: 'บาท', 'aria-label': 'ยอดที่จ่ายแทน', oninput: recalc }),
+      h('button', { type: 'button', className: 'ghost', onclick: () => { row.remove(); recalc(); } }, 'ลบ'));
     others.append(row);
   }
 
   // รวมรายการที่เลือก → [{charge_id, student_id, amount_satang}]
   function items() {
-    const list = picks.filter(p => p.cb.checked).map(p => ({ charge_id: p.r.charge_id, amount_satang: toSatang(p.amt.value), title: p.r.title }));
+    const list = picks.filter(p => p.cb.checked && toSatang(p.amt.value) !== 0).map(p => ({ charge_id: p.r.charge_id, amount_satang: toSatang(p.amt.value), title: p.r.title }));
     for (const row of others.children) {
       list.push({ charge_id: $('[name=o_charge]', row).value, student_id: $('[name=o_sid]', row).value.trim(),
                   amount_satang: toSatang($('[name=o_amt]', row).value), title: 'จ่ายแทน ' + $('[name=o_sid]', row).value });
     }
     return list;
+  }
+
+  // กรอกยอดโอนแล้ว ตัดรายการที่ติ๊กไว้ตามลำดับเท่าที่โอนมา (หักส่วนที่จ่ายแทนเพื่อนก่อน) ไม่ต้องแก้ยอดเอง
+  function recalc() {
+    const total = toSatang(form.amount.value);
+    if (total != null) {
+      let left = total - [...others.children].reduce((t, row) => t + (toSatang($('[name=o_amt]', row).value) ?? 0), 0);
+      for (const p of picks.filter(p => p.cb.checked)) {
+        const v = Math.max(0, Math.min(Number(p.r.outstanding_satang), left));
+        p.amt.value = baht(v).replace(/,/g, '');
+        left -= v;
+      }
+    }
+    update();
   }
 
   function update() {
@@ -386,7 +400,7 @@ async function renderPay() {
     // แสดงเฉพาะเมื่อยอดไม่เท่ากัน: โอนเกิน → เครดิต, เลือกเกินยอดโอน → ส่งไม่ได้
     summary.textContent = !total ? ''
       : used > total ? `⚠ รายการที่เลือกรวม ${baht(used)} บาท มากกว่ายอดที่โอน ${baht(total)} บาท แก้ยอดให้ตรงกันก่อนส่ง`
-      : total > used ? `ส่วนที่เกิน ${baht(total - used)} บาท จะเก็บเป็นเครดิตไว้ตัดยอดครั้งหน้า` : '';
+      : total > used ? `ส่วนเกิน ${baht(total - used)} บาทจะถูกเก็บเป็นเครดิต` : '';
   }
 
   // อ่าน QR บนสลิปทันทีที่เลือกไฟล์ ได้เลขอ้างอิงไว้กันสลิปซ้ำ และเติมธนาคาร/เลขอ้างอิงให้
@@ -397,7 +411,7 @@ async function renderPay() {
     qrNote.hidden = true;
     qr = file ? readSlipQr(file).then(r => {
       qrNote.hidden = !!r; // อ่านได้ → ช่องธนาคาร/เลขอ้างอิงถูกเติมให้ ไม่ต้องบอกซ้ำ
-      qrNote.textContent = 'อ่าน QR บนสลิปไม่ได้ ถ้ามีรูปสลิปเต็มใบจากแอปธนาคาร ใช้รูปนั้นแทน';
+      qrNote.textContent = 'อ่าน QR ไม่ได้';
       if (r && !form.payer_bank.value) form.payer_bank.value = BANKS[r.bank] ?? '';
       if (r && !form.reference_no.value) form.reference_no.value = r.ref;
       return r;
@@ -413,7 +427,7 @@ async function renderPay() {
       : h('div', { className: 'warn' }, 'ยังไม่ได้ตั้งบัญชีรับเงิน กรุณาสอบถามเหรัญญิกก่อนโอน'),
     h('div', { className: 'grid' },
       h('div', {}, h('label', { htmlFor: 'p-amt' }, 'ยอดที่โอน (บาท)'),
-        h('input', { id: 'p-amt', name: 'amount', inputMode: 'decimal', required: true, oninput: update })),
+        h('input', { id: 'p-amt', name: 'amount', inputMode: 'decimal', required: true, oninput: recalc })),
       h('div', {}, h('label', { htmlFor: 'p-at' }, 'วันเวลาที่โอน'),
         h('input', { id: 'p-at', name: 'transferred_at', type: 'datetime-local', required: true, value: nowLocal, max: nowLocal }))),
     h('label', { htmlFor: 'p-slip' }, 'สลิป (รูป JPG, PNG หรือ WEBP ไม่เกิน 5 MB)'),
