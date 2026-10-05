@@ -383,9 +383,10 @@ async function renderPay() {
   function update() {
     const total = toSatang(form.amount.value) ?? 0;
     const used = items().reduce((s, i) => s + (i.amount_satang ?? 0), 0);
-    summary.textContent = `ตัดรายการรวม ${baht(used)} บาท` +
-      (total > used ? ` · ส่วนที่เกิน ${baht(total - used)} บาท จะเก็บเป็นเครดิต` : '') +
-      (used > total ? ' · ⚠ ยอดที่เลือกเกินยอดโอน' : '');
+    // แสดงเฉพาะเมื่อยอดไม่เท่ากัน: โอนเกิน → เครดิต, เลือกเกินยอดโอน → ส่งไม่ได้
+    summary.textContent = !total ? ''
+      : used > total ? `⚠ รายการที่เลือกรวม ${baht(used)} บาท มากกว่ายอดที่โอน ${baht(total)} บาท แก้ยอดให้ตรงกันก่อนส่ง`
+      : total > used ? `ส่วนที่เกิน ${baht(total - used)} บาท จะเก็บเป็นเครดิตไว้ตัดยอดครั้งหน้า` : '';
   }
 
   // อ่าน QR บนสลิปทันทีที่เลือกไฟล์ ได้เลขอ้างอิงไว้กันสลิปซ้ำ และเติมธนาคาร/เลขอ้างอิงให้
@@ -393,10 +394,10 @@ async function renderPay() {
   let qr = Promise.resolve(null);
   function readQr(e) {
     const file = e.target.files[0];
-    qrNote.hidden = !file; qrNote.textContent = 'กำลังอ่าน QR บนสลิป…';
+    qrNote.hidden = true;
     qr = file ? readSlipQr(file).then(r => {
-      qrNote.textContent = r ? `อ่าน QR บนสลิปได้ ✓ ธนาคาร${BANKS[r.bank] ?? ' ' + r.bank} เลขอ้างอิง ${r.ref}`
-        : 'อ่าน QR บนสลิปไม่ได้ ส่งต่อได้ แต่ใช้รูปสลิปเต็มใบจากแอปธนาคารจะตรวจได้เร็วกว่า';
+      qrNote.hidden = !!r; // อ่านได้ → ช่องธนาคาร/เลขอ้างอิงถูกเติมให้ ไม่ต้องบอกซ้ำ
+      qrNote.textContent = 'อ่าน QR บนสลิปไม่ได้ ถ้ามีรูปสลิปเต็มใบจากแอปธนาคาร ใช้รูปนั้นแทน';
       if (r && !form.payer_bank.value) form.payer_bank.value = BANKS[r.bank] ?? '';
       if (r && !form.reference_no.value) form.reference_no.value = r.ref;
       return r;
